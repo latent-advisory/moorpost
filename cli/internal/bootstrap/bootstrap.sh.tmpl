@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Moorpost VM bootstrap script (rendered for project: {{.ProjectSlug}})
+# Runs once on first VM boot via the provider's startup-script mechanism.
+# Idempotent: re-running is a no-op once everything's installed.
+
+set -euo pipefail
+
+LOG=/var/log/moorpost-bootstrap.log
+exec > >(tee -a "$LOG") 2>&1
+
+echo "[moorpost] bootstrap starting at $(date -u +%FT%TZ) for project={{.ProjectSlug}}"
+
+# --------------------------------------------------------------------------
+# 1. Base packages (apt)
+# --------------------------------------------------------------------------
+echo "[moorpost] step 1: base packages"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -y
+apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg jq tmux \
+    ripgrep fd-find \
+    git unzip
+
+# `fd-find` installs as `fdfind` on Debian/Ubuntu; symlink for muscle memory.
+if [ ! -e /usr/local/bin/fd ] && command -v fdfind >/dev/null 2>&1; then
+    ln -s "$(command -v fdfind)" /usr/local/bin/fd
+fi
+
+# --------------------------------------------------------------------------
+# 2. Node.js {{.NodeVersion}}
+# --------------------------------------------------------------------------
+echo "[moorpost] step 2: Node.js {{.NodeVersion}}"
+if ! command -v node >/dev/null 2>&1 || \
+   [ "$(node --version 2>/dev/null | cut -dv -f2 | cut -d. -f1)" != "{{.NodeVersion}}" ]; then
+    curl -fsSL https://deb.nodesource.com/setup_{{.NodeVersion}}.x | bash -
+    apt-get install -y nodejs
+fi
+echo "[moorpost] node: $(node --version 2>/dev/null || echo MISSING)"
+
+# --------------------------------------------------------------------------
+# 3. Claude Code CLI
+# --------------------------------------------------------------------------
+echo "[moorpost] step 3: Claude Code CLI"
+if ! command -v claude >/dev/null 2>&1; then
+    npm install -g @anthropic-ai/claude-code{{if .ClaudeCodeVersion}}@{{.ClaudeCodeVersion}}{{end}}
+fi
+echo "[moorpost] claude: $(claude --version 2>/dev/null || echo MISSING)"
+
+# --------------------------------------------------------------------------
+# 4. uv (fast Python package manager)
+# --------------------------------------------------------------------------
+echo "[moorpost] step 4: uv"
+if ! command -v uv >/dev/null 2>&1; then
+    curl -fsSL https://astral.sh/uv/install.sh | sh
+    # Move to /usr/local/bin so it's on PATH for all users.
+    if [ -f "$HOME/.local/bin/uv" ] && [ ! -e /usr/local/bin/uv ]; then
+        ln -s "$HOME/.local/bin/uv" /usr/local/bin/uv
+    fi
+fi
+
+# --------------------------------------------------------------------------
+# 5. Project working tree + symlink
+# --------------------------------------------------------------------------
+echo "[moorpost] step 5: project working tree + abs-path symlink"
+REMOTE_HOME="$(getent passwd "{{.RemoteUser}}" | cut -d: -f6)"
+if [ -z "$REMOTE_HOME" ]; then
+    # Fallback for OS Login users who may not exist yet at first boot.
+    REMOTE_HOME="/home/{{.RemoteUser}}"
+    mkdir -p "$REMOTE_HOME"
+fi
+PROJECT_DIR="$REMOTE_HOME/moorpost/{{.ProjectSlug}}"
+mkdir -p "$PROJECT_DIR"
+chown -R "{{.RemoteUser}}:{{.RemoteUser}}" "$REMOTE_HOME/moorpost"
+
+# The absolute-path symlink is what makes `claude --resume` work seamlessly
+# across local and remote — both sides resolve to the same path, so Claude's
+# session-state encoding (~/.claude/projects/<encoded>) matches.
+LOCAL_ABS_PATH="{{.LocalAbsPath}}"
+if [ -n "$LOCAL_ABS_PATH" ]; then
+    LOCAL_ABS_PARENT="$(dirname "$LOCAL_ABS_PATH")"
+    mkdir -p "$LOCAL_ABS_PARENT"
+    if [ -L "$LOCAL_ABS_PATH" ] || [ ! -e "$LOCAL_ABS_PATH" ]; then
+        ln -sfn "$PROJECT_DIR" "$LOCAL_ABS_PATH"
+    fi
+fi
+
+# --------------------------------------------------------------------------
+# 6. /etc/moorpost/env (skeleton; populated later by `moorpost handoff`)
+# --------------------------------------------------------------------------
+echo "[moorpost] step 6: /etc/moorpost/env skeleton"
+mkdir -p /etc/moorpost
+if [ ! -f /etc/moorpost/env ]; then
+    : > /etc/moorpost/env
+fi
+chmod 0600 /etc/moorpost/env
+
+# --------------------------------------------------------------------------
+# Done
+# --------------------------------------------------------------------------
+echo "[moorpost] bootstrap complete at $(date -u +%FT%TZ)"
+echo "[moorpost] project tree: $PROJECT_DIR"
+echo "[moorpost] symlink:      $LOCAL_ABS_PATH -> $PROJECT_DIR"

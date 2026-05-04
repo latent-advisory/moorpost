@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/latent-advisory/moorpost/cli/internal/bootstrap"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	"github.com/spf13/cobra"
@@ -91,6 +92,22 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 	zone, _ := gcpCfg["zone"].(string)
 	tags := append([]string{"moorpost"}, opts.Tags...)
 
+	// Render the bootstrap script. The remote user is whatever the provider
+	// established as the OS-login user; for v0.1 GCP we default to "moorpost"
+	// (matching gcp.engine.SSHUser default) but read from gcp config if set.
+	remoteUser, _ := gcpCfg["ssh_user"].(string)
+	if remoteUser == "" {
+		remoteUser = "moorpost"
+	}
+	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
+		ProjectSlug:  c.Config.ProjectSlug,
+		LocalAbsPath: c.ProjectDir,
+		RemoteUser:   remoteUser,
+	})
+	if err != nil {
+		return fmt.Errorf("provision: render bootstrap: %w", err)
+	}
+
 	spec := provider.ProvisionSpec{
 		Name:             vmName(c),
 		Zone:             zone,
@@ -100,6 +117,7 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		SSHKeyPub:        string(pub),
 		Tags:             tags,
 		StartImmediately: opts.Start,
+		BootstrapScript:  bootScript,
 	}
 
 	fmt.Fprintf(out, "Provisioning %s in %s...\n", spec.Name, spec.Zone)
