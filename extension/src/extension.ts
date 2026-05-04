@@ -7,6 +7,7 @@ import * as vscode from 'vscode';
 import { registerCommands } from './commands';
 import { setupStatusBar } from './statusBar';
 import { MoorpostTreeProvider } from './treeView';
+import { IdleMonitor } from './idleMonitor';
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new MoorpostTreeProvider();
@@ -17,6 +18,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
   registerCommands(context, treeProvider);
   setupStatusBar(context);
+
+  const idle = new IdleMonitor();
+  idle.start(context);
 
   // Smoke-log so the user can confirm the extension activated. Visible in
   // Output → "Moorpost".

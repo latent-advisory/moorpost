@@ -103,6 +103,18 @@
           "default": 30,
           "minimum": 5,
           "description": "How often to refresh the status bar by calling `moorpost status`."
+        },
+        "moorpost.promptOnFocusLossMinutes": {
+          "type": "number",
+          "default": 30,
+          "minimum": 0,
+          "description": "Show a 'hand off to remote?' prompt after the VSCode window has been unfocused for this many minutes. Set to 0 to disable."
+        },
+        "moorpost.promptOnIdleMinutes": {
+          "type": "number",
+          "default": 15,
+          "minimum": 0,
+          "description": "Show a 'hand off to remote?' prompt after this many minutes of editor inactivity. Also fires when the OS appears to wake from sleep. Set to 0 to disable."
         }
       }
     }
