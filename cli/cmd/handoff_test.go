@@ -54,10 +54,15 @@ func (f *cmdFakeAgent) IsActive(context.Context, agent.SSHTarget, agent.SessionR
 	return f.isActiveResult, f.isActiveErr
 }
 
-// cmdFakeSync records OneShot calls.
+// cmdFakeSync records OneShot, StartSession, Stop calls.
 type cmdFakeSync struct {
-	oneShotCalls []oneShotRecord
-	oneShotErr   error
+	oneShotCalls     []oneShotRecord
+	oneShotErr       error
+	startCalls       []mpsync.SyncSpec
+	startReturnID    mpsync.SyncSessionID // configurable; default "fake-sync-id"
+	startErr         error
+	stopCalls        []mpsync.SyncSessionID
+	stopErr          error
 }
 
 type oneShotRecord struct {
@@ -66,8 +71,15 @@ type oneShotRecord struct {
 }
 
 func (f *cmdFakeSync) ID() string { return "fake-sync" }
-func (f *cmdFakeSync) StartSession(context.Context, mpsync.SyncSpec) (mpsync.SyncSessionID, error) {
-	return "", nil
+func (f *cmdFakeSync) StartSession(_ context.Context, spec mpsync.SyncSpec) (mpsync.SyncSessionID, error) {
+	f.startCalls = append(f.startCalls, spec)
+	if f.startErr != nil {
+		return "", f.startErr
+	}
+	if f.startReturnID == "" {
+		return mpsync.SyncSessionID("fake-sync-id"), nil
+	}
+	return f.startReturnID, nil
 }
 func (f *cmdFakeSync) Pause(context.Context, mpsync.SyncSessionID) error  { return nil }
 func (f *cmdFakeSync) Resume(context.Context, mpsync.SyncSessionID) error { return nil }
@@ -78,7 +90,10 @@ func (f *cmdFakeSync) OneShot(_ context.Context, src, dst mpsync.Endpoint, dir m
 func (f *cmdFakeSync) Status(context.Context, mpsync.SyncSessionID) (mpsync.SyncStatus, error) {
 	return mpsync.SyncStatus{}, nil
 }
-func (f *cmdFakeSync) Stop(context.Context, mpsync.SyncSessionID) error { return nil }
+func (f *cmdFakeSync) Stop(_ context.Context, id mpsync.SyncSessionID) error {
+	f.stopCalls = append(f.stopCalls, id)
+	return f.stopErr
+}
 
 func makeHandoffContext(t *testing.T, fp *fakeProvider, fa *cmdFakeAgent, fs *cmdFakeSync, activeSide state.Side) *Context {
 	t.Helper()
@@ -197,6 +212,17 @@ func TestRunReturnHappyPath(t *testing.T) {
 	fa := &cmdFakeAgent{sessionStateRoot: t.TempDir()}
 	fs := &cmdFakeSync{}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
+
+	// Pre-populate a SyncSessionID (would normally be set by an earlier
+	// handoff). Return must call Sync.Stop with this ID.
+	_ = state.WithLock(c.StatePath, func(s *state.State) error {
+		ps := s.Projects[c.ProjectDir]
+		ps.SyncSessionID = "session-from-prior-handoff"
+		s.SetProject(c.ProjectDir, ps)
+		return nil
+	})
+	c.State, _ = state.Open(c.StatePath)
+
 	var out bytes.Buffer
 	fixedNow := time.Date(2026, 5, 4, 22, 0, 0, 0, time.UTC)
 	err := RunReturn(context.Background(), &out, c, ReturnOptions{Stop: true, Now: func() time.Time { return fixedNow }})
@@ -206,10 +232,19 @@ func TestRunReturnHappyPath(t *testing.T) {
 	if len(fp.stopCalls) != 1 {
 		t.Errorf("Provider.Stop calls = %d, want 1 (Stop=true)", len(fp.stopCalls))
 	}
+	// v0.2.1+: return uses one-shot only for session state (RemoteToLocal);
+	// project files come back via the continuous sync that ran since handoff.
+	if len(fs.oneShotCalls) != 1 {
+		t.Errorf("OneShot calls = %d, want 1 (session state only)", len(fs.oneShotCalls))
+	}
 	for _, call := range fs.oneShotCalls {
 		if call.dir != mpsync.DirectionRemoteToLocal {
 			t.Errorf("OneShot dir = %q, want remote-to-local", call.dir)
 		}
+	}
+	// Continuous sync stopped with the persisted ID.
+	if len(fs.stopCalls) != 1 || fs.stopCalls[0] != "session-from-prior-handoff" {
+		t.Errorf("Sync.Stop calls = %v, want exactly [session-from-prior-handoff]", fs.stopCalls)
 	}
 	st, _ := state.Open(c.StatePath)
 	ps, _ := st.GetProject(c.ProjectDir)
@@ -218,6 +253,51 @@ func TestRunReturnHappyPath(t *testing.T) {
 	}
 	if !ps.LastReturn.Equal(fixedNow) {
 		t.Errorf("LastReturn = %v, want %v", ps.LastReturn, fixedNow)
+	}
+	if ps.SyncSessionID != "" {
+		t.Errorf("SyncSessionID should be cleared after return; got %q", ps.SyncSessionID)
+	}
+}
+
+func TestRunHandoffStartSessionFailure(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{authResult: agent.Credential{Value: "x"}}
+	fs := &cmdFakeSync{startErr: errors.New("mutagen daemon not running")}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	if err == nil || !strings.Contains(err.Error(), "start sync session") {
+		t.Errorf("err = %v, want 'start sync session'", err)
+	}
+	// Resume should NOT have been called when sync session creation failed.
+	if fa.resumeCalls != 0 {
+		t.Errorf("Resume should not be called when sync session start fails; got %d", fa.resumeCalls)
+	}
+	// State should NOT have been updated to remote.
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.ActiveSide == state.SideRemote {
+		t.Error("ActiveSide should not have flipped to remote on sync failure")
+	}
+}
+
+func TestRunReturnPreV0_2_1HandoffNoSyncID(t *testing.T) {
+	// Compatibility: a project handed off pre-v0.2.1 won't have a
+	// SyncSessionID. Return should still work (skip the sync stop).
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
+	// Don't populate SyncSessionID.
+	var out bytes.Buffer
+	if err := RunReturn(context.Background(), &out, c, ReturnOptions{}); err != nil {
+		t.Fatalf("RunReturn: %v", err)
+	}
+	if len(fs.stopCalls) != 0 {
+		t.Errorf("Sync.Stop should not be called when no SyncSessionID recorded; got %d", len(fs.stopCalls))
+	}
+	if !strings.Contains(out.String(), "predates v0.2.1") {
+		t.Errorf("output should note pre-v0.2.1 compat: %q", out.String())
 	}
 }
 

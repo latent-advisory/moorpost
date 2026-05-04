@@ -112,18 +112,9 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		return fmt.Errorf("handoff: inject credential: %w", err)
 	}
 
-	// One-shot push: project files.
-	remoteProjectPath := remoteProjectPathFor(c)
-	fmt.Fprintf(out, "Syncing project files → %s:%s ...\n", tgt.Host, remoteProjectPath)
-	if err := c.Sync.OneShot(ctx,
-		mpsync.Endpoint{Path: c.ProjectDir + "/"},
-		mpsync.Endpoint{SSHHost: hostFromTarget(tgt), Path: remoteProjectPath + "/"},
-		mpsync.DirectionLocalToRemote,
-	); err != nil {
-		return fmt.Errorf("handoff: sync project: %w", err)
-	}
-
-	// One-shot push: agent session state directory.
+	// One-shot push: agent session state directory. This must happen
+	// BEFORE Resume so the remote claude --resume sees the latest state.
+	// (Project files are handled by the continuous sync below.)
 	localState := c.Agent.SessionStatePath(c.ProjectDir)
 	if localState != "" {
 		remoteState := remoteSessionStateFor(c)
@@ -138,6 +129,23 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		}
 	}
 
+	// Start the continuous bidirectional project-file sync. Per
+	// PLUGIN.md §6.5, project files are continuously synced (so the
+	// desktop app's .docx edits at the root propagate to the remote
+	// while Claude Code is running there).
+	remoteProjectPath := remoteProjectPathFor(c)
+	fmt.Fprintf(out, "Starting continuous sync %s ↔ %s:%s ...\n", c.ProjectDir, tgt.Host, remoteProjectPath)
+	syncID, err := c.Sync.StartSession(ctx, mpsync.SyncSpec{
+		Label:          c.Config.ProjectSlug + "-handoff",
+		Alpha:          mpsync.Endpoint{Path: c.ProjectDir},
+		Beta:           mpsync.Endpoint{SSHHost: hostFromTarget(tgt), Path: remoteProjectPath},
+		ConflictPolicy: c.Config.Sync.ConflictPolicy,
+		IgnorePatterns: c.Config.Sync.Ignore,
+	})
+	if err != nil {
+		return fmt.Errorf("handoff: start sync session: %w", err)
+	}
+
 	// Resume the agent on the remote.
 	ref := agent.SessionRef{
 		ProjectSlug:   c.Config.ProjectSlug,
@@ -149,10 +157,11 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		return fmt.Errorf("handoff: resume on remote: %w", err)
 	}
 
-	// Update state.
+	// Update state with handoff metadata + new continuous sync session ID.
 	if err := withProjectState(c, func(p *state.ProjectState) error {
 		p.LastHandoff = now()
 		p.ActiveSide = state.SideRemote
+		p.SyncSessionID = string(syncID)
 		return nil
 	}); err != nil {
 		return err

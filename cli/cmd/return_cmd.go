@@ -75,15 +75,17 @@ func RunReturn(ctx context.Context, out io.Writer, c *Context, opts ReturnOption
 		return fmt.Errorf("return: cannot resolve remote SSH target: %w", err)
 	}
 
-	// Pull project files.
-	remoteProjectPath := remoteProjectPathFor(c)
-	fmt.Fprintf(out, "Syncing project files ← %s:%s ...\n", tgt.Host, remoteProjectPath)
-	if err := c.Sync.OneShot(ctx,
-		mpsync.Endpoint{SSHHost: hostFromTarget(tgt), Path: remoteProjectPath + "/"},
-		mpsync.Endpoint{Path: c.ProjectDir + "/"},
-		mpsync.DirectionRemoteToLocal,
-	); err != nil {
-		return fmt.Errorf("return: sync project: %w", err)
+	// Stop the continuous project-file sync. With continuous bidirectional
+	// sync running since handoff, the local working tree is already current
+	// — no project-files OneShot pull needed. We just terminate the session.
+	if ps.SyncSessionID != "" {
+		fmt.Fprintf(out, "Stopping sync session %s ...\n", ps.SyncSessionID)
+		if err := c.Sync.Stop(ctx, mpsync.SyncSessionID(ps.SyncSessionID)); err != nil {
+			// Stale session is recoverable; log and continue.
+			fmt.Fprintf(out, "warning: sync stop failed (session may be stale): %v\n", err)
+		}
+	} else {
+		fmt.Fprintln(out, "(no continuous sync session recorded; this handoff predates v0.2.1)")
 	}
 
 	// Pull session state.
@@ -100,10 +102,11 @@ func RunReturn(ctx context.Context, out io.Writer, c *Context, opts ReturnOption
 		}
 	}
 
-	// Update state: active_side=local, LastReturn stamped.
+	// Update state: active_side=local, LastReturn stamped, clear sync session.
 	if err := withProjectState(c, func(p *state.ProjectState) error {
 		p.LastReturn = now()
 		p.ActiveSide = state.SideLocal
+		p.SyncSessionID = ""
 		return nil
 	}); err != nil {
 		return err
