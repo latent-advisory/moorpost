@@ -237,7 +237,7 @@ func TestRunUpHappyPath(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "35.1.2.3", Port: 22, User: "u"}}
 	c, _ := makeLifecycleContext(t, fp, true)
 	var out bytes.Buffer
-	if err := RunUp(context.Background(), &out, c, false); err != nil {
+	if err := RunUp(context.Background(), &out, c, UpOptions{}); err != nil {
 		t.Fatalf("RunUp: %v", err)
 	}
 	if len(fp.startCalls) != 1 || fp.startCalls[0] != "argus-vm" {
@@ -256,7 +256,7 @@ func TestRunUpNoProject(t *testing.T) {
 	fp := &fakeProvider{}
 	c, _ := makeLifecycleContext(t, fp, false)
 	var out bytes.Buffer
-	if err := RunUp(context.Background(), &out, c, false); err == nil {
+	if err := RunUp(context.Background(), &out, c, UpOptions{}); err == nil {
 		t.Error("RunUp without provisioned project should error")
 	}
 }

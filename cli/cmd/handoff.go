@@ -33,21 +33,27 @@ the laptop and the work continues on the VM.`,
 			return err
 		}
 		return RunHandoff(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), c, HandoffOptions{
-			SkipPrompt: handoffFlagYes,
+			SkipPrompt:  handoffFlagYes,
+			OverrideCap: handoffFlagOverrideCap,
 		})
 	},
 }
 
-var handoffFlagYes bool
+var (
+	handoffFlagYes         bool
+	handoffFlagOverrideCap bool
+)
 
 func init() {
 	handoffCmd.Flags().BoolVarP(&handoffFlagYes, "yes", "y", false, "skip the confirmation prompt")
+	handoffCmd.Flags().BoolVar(&handoffFlagOverrideCap, "override-cap", false, "bypass cost.monthly_cap_usd")
 	rootCmd.AddCommand(handoffCmd)
 }
 
 // HandoffOptions controls RunHandoff.
 type HandoffOptions struct {
-	SkipPrompt bool
+	SkipPrompt  bool
+	OverrideCap bool
 	// Now overrides time.Now for deterministic testing of timestamps.
 	Now func() time.Time
 	// IPWaitTimeout overrides the default 60s.
@@ -86,6 +92,11 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		if strings.ToLower(strings.TrimSpace(line)) != "y" {
 			return errors.New("handoff: aborted")
 		}
+	}
+
+	// Cost cap.
+	if err := enforceCostCap(ctx, c, opts.OverrideCap); err != nil {
+		return fmt.Errorf("handoff: %w", err)
 	}
 
 	// Start the VM (idempotent on already-running).

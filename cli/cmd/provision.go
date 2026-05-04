@@ -31,32 +31,36 @@ project simply re-confirms the recorded VM id.`,
 			return err
 		}
 		opts := ProvisionOptions{
-			SSHKeyPath: provisionFlagSSHKey,
-			Start:      provisionFlagStart,
-			Tags:       provisionFlagTags,
+			SSHKeyPath:  provisionFlagSSHKey,
+			Start:       provisionFlagStart,
+			Tags:        provisionFlagTags,
+			OverrideCap: provisionFlagOverrideCap,
 		}
 		return RunProvision(cmd.Context(), cmd.OutOrStdout(), c, opts)
 	},
 }
 
 var (
-	provisionFlagSSHKey string
-	provisionFlagStart  bool
-	provisionFlagTags   []string
+	provisionFlagSSHKey      string
+	provisionFlagStart       bool
+	provisionFlagTags        []string
+	provisionFlagOverrideCap bool
 )
 
 func init() {
 	provisionCmd.Flags().StringVar(&provisionFlagSSHKey, "ssh-key", "", "path to SSH public key (default: ~/.ssh/google_compute_engine.pub)")
 	provisionCmd.Flags().BoolVar(&provisionFlagStart, "start", false, "start the VM immediately after creation (skip the local-first stopped default)")
 	provisionCmd.Flags().StringSliceVar(&provisionFlagTags, "tag", nil, "extra GCP network tag (repeatable)")
+	provisionCmd.Flags().BoolVar(&provisionFlagOverrideCap, "override-cap", false, "bypass cost.monthly_cap_usd")
 	rootCmd.AddCommand(provisionCmd)
 }
 
 // ProvisionOptions are the runtime knobs for RunProvision.
 type ProvisionOptions struct {
-	SSHKeyPath string   // path to .pub file
-	Start      bool     // start immediately after create
-	Tags       []string // extra tags
+	SSHKeyPath  string   // path to .pub file
+	Start       bool     // start immediately after create
+	Tags        []string // extra tags
+	OverrideCap bool     // bypass cost.monthly_cap_usd check
 }
 
 // RunProvision is the testable provision entrypoint.
@@ -118,6 +122,11 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		Tags:             tags,
 		StartImmediately: opts.Start,
 		BootstrapScript:  bootScript,
+	}
+
+	// Cost cap: refuse if MTD spend already over user-set cap.
+	if err := enforceCostCap(ctx, c, opts.OverrideCap); err != nil {
+		return fmt.Errorf("provision: %w", err)
 	}
 
 	// Preflight: catch missing API/auth before the create call so the user

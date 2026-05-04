@@ -25,19 +25,32 @@ discipline lives in v0.3).`,
 		if err != nil {
 			return err
 		}
-		return RunUp(cmd.Context(), cmd.OutOrStdout(), c, upFlagPersistent)
+		return RunUp(cmd.Context(), cmd.OutOrStdout(), c, UpOptions{
+			Persistent:  upFlagPersistent,
+			OverrideCap: upFlagOverrideCap,
+		})
 	},
 }
 
-var upFlagPersistent bool
+var (
+	upFlagPersistent  bool
+	upFlagOverrideCap bool
+)
 
 func init() {
 	upCmd.Flags().BoolVar(&upFlagPersistent, "persistent", false, "always-remote mode (do not auto-stop)")
+	upCmd.Flags().BoolVar(&upFlagOverrideCap, "override-cap", false, "bypass cost.monthly_cap_usd")
 	rootCmd.AddCommand(upCmd)
 }
 
+// UpOptions are the runtime knobs for RunUp.
+type UpOptions struct {
+	Persistent  bool
+	OverrideCap bool
+}
+
 // RunUp starts the project's VM and refreshes the cached IP.
-func RunUp(ctx context.Context, out io.Writer, c *Context, persistent bool) error {
+func RunUp(ctx context.Context, out io.Writer, c *Context, opts UpOptions) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -50,6 +63,9 @@ func RunUp(ctx context.Context, out io.Writer, c *Context, persistent bool) erro
 	ps, ok := c.State.GetProject(projectKey(c))
 	if !ok || ps.VMID == "" {
 		return errors.New("up: project not provisioned (run `moorpost provision` first)")
+	}
+	if err := enforceCostCap(ctx, c, opts.OverrideCap); err != nil {
+		return fmt.Errorf("up: %w", err)
 	}
 	fmt.Fprintf(out, "Starting %s...\n", ps.VMID)
 	if err := c.Provider.Start(ctx, ps.VMID); err != nil {
@@ -69,7 +85,7 @@ func RunUp(ctx context.Context, out io.Writer, c *Context, persistent bool) erro
 	}); err != nil {
 		return err
 	}
-	if persistent {
+	if opts.Persistent {
 		fmt.Fprintf(out, "VM %s running (persistent mode).\n", ps.VMID)
 	} else {
 		fmt.Fprintf(out, "VM %s running. Connect with `moorpost attach`.\n", ps.VMID)
