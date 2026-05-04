@@ -1,0 +1,15 @@
+# Files excluded from the produced .vsix.
+# Bundle contains everything VSCode needs at runtime; everything else is build/dev only.
+
+src/
+test/
+.vscode-test/
+node_modules/
+.gitignore
+.eslintrc*
+tsconfig.json
+esbuild.js
+**/*.ts
+!dist/**/*.js
+**/*.map
+.github/

@@ -1,0 +1,95 @@
+{
+  "name": "moorpost",
+  "displayName": "Moorpost",
+  "description": "Tether your laptop to a remote forward base where Claude Code keeps working.",
+  "version": "0.2.0",
+  "publisher": "latent-advisory",
+  "license": "Apache-2.0",
+  "homepage": "https://github.com/latent-advisory/moorpost",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/latent-advisory/moorpost.git",
+    "directory": "extension"
+  },
+  "engines": {
+    "vscode": "^1.85.0",
+    "node": ">=18"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "claude",
+    "claude-code",
+    "remote",
+    "tmux",
+    "gcp"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:moorpost.signIn",
+    "onCommand:moorpost.provision",
+    "onCommand:moorpost.handoff",
+    "onCommand:moorpost.return",
+    "onCommand:moorpost.status",
+    "workspaceContains:.moorpost/config.yaml"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "moorpost.signIn",
+        "title": "Moorpost: Sign in (claude OAuth)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.provision",
+        "title": "Moorpost: Provision VM",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.handoff",
+        "title": "Moorpost: Handoff to remote",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.return",
+        "title": "Moorpost: Return to local",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.status",
+        "title": "Moorpost: Show status",
+        "category": "Moorpost"
+      }
+    ],
+    "configuration": {
+      "title": "Moorpost",
+      "properties": {
+        "moorpost.cliPath": {
+          "type": "string",
+          "default": "moorpost",
+          "description": "Path to the moorpost CLI binary (default: search PATH)."
+        },
+        "moorpost.statusBarRefreshSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "How often to refresh the status bar by calling `moorpost status`."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package --no-dependencies",
+    "vscode:prepublish": "node esbuild.js --production"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.21.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^3.0.0"
+  }
+}

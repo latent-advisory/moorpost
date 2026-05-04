@@ -1,10 +1,12 @@
 # Moorpost — top-level Makefile
 # All real work happens in cli/. This is just convenience wrappers.
 
-.PHONY: build test test-race e2e cover install clean lint release help
+.PHONY: build test test-race e2e cover install clean lint release \
+        extension-install extension-build extension-package help
 
 CLI := cli
 BIN := moorpost
+EXT := extension
 VERSION_PKG := github.com/latent-advisory/moorpost/cli/internal/version
 
 # Build-time version metadata. `git describe` returns the most recent
@@ -42,9 +44,19 @@ install: build ## Install the binary to /usr/local/bin
 lint: ## Run go vet
 	cd $(CLI) && go vet ./...
 
+extension-install: ## Install the VSCode extension's npm deps
+	cd $(EXT) && npm install
+
+extension-build: ## Bundle the VSCode extension into dist/extension.js
+	cd $(EXT) && npm run build
+
+extension-package: extension-build ## Produce a .vsix package
+	cd $(EXT) && npm run package
+
 clean: ## Remove built binary and test artifacts
 	rm -f $(CLI)/$(BIN)
 	rm -rf dist/
+	rm -rf $(EXT)/dist $(EXT)/out $(EXT)/*.vsix
 	cd $(CLI) && go clean ./...
 
 release: ## Cross-compile binaries for darwin/linux × arm64/amd64 into dist/
