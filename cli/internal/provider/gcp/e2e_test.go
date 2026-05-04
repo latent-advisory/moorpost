@@ -324,6 +324,181 @@ func TestGCPBootstrap_E2E(t *testing.T) {
 	t.Logf("✓ full-cycle bootstrap E2E passed")
 }
 
+// TestGCPPersistentAutoStop_E2E provisions a VM with mode=persistent +
+// auto_stop_minutes=5 and verifies that the VM stops itself after the
+// SSH session closes (no SSH, no tmux, no mutagen-agent → idle counter
+// climbs → systemd timer triggers shutdown → GCE transitions to
+// TERMINATED).
+//
+// Validates iter 33's VM-side bash + systemd plumbing end-to-end. The
+// unit tests cover the script generator + bash -n syntax; this is the
+// "does it actually work on real Ubuntu" check.
+//
+// Runtime budget: ~15-20 minutes. Cost: ~$0.005.
+func TestGCPPersistentAutoStop_E2E(t *testing.T) {
+	project := envOr("MOORPOST_E2E_PROJECT", "latent-advisory")
+	zone := envOr("MOORPOST_E2E_ZONE", "us-central1-a")
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
+	defer cancel()
+
+	// Pre-flight.
+	stdout, _, code, err := runGcloud(ctx,
+		"compute", "instances", "list",
+		"--project="+project,
+		"--filter=tags.items:moorpost-test",
+		"--format=value(name)")
+	if err != nil || code != 0 {
+		t.Fatalf("pre-flight gcloud list: err=%v code=%d", err, code)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("pre-flight: orphan moorpost-test instances found:\n%s", stdout)
+	}
+
+	p, err := NewWithOptions(Options{
+		Project: project,
+		Zone:    zone,
+		SSHUser: "moorpost",
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	pubKey := generateEd25519PubKey(t)
+	const thresholdMinutes = 5 // matches CheckIntervalMinutes — first all-idle check stops
+	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
+		ProjectSlug:         "e2e-autostop",
+		LocalAbsPath:        "/Users/landytang/argus",
+		RemoteUser:          "moorpost",
+		IdleAutoStopMinutes: thresholdMinutes,
+	})
+	if err != nil {
+		t.Fatalf("bootstrap.Render: %v", err)
+	}
+	// Sanity: ensure the idle-monitor pieces are in the rendered script.
+	for _, want := range []string{
+		"moorpost-idle-check.sh",
+		"moorpost-idle.timer",
+		"THRESHOLD=5",
+	} {
+		if !strings.Contains(bootScript, want) {
+			t.Fatalf("bootstrap missing %q — IdleAutoStopMinutes plumbing broken?", want)
+		}
+	}
+
+	vmName := fmt.Sprintf("moorpost-test-as-%d", time.Now().Unix())
+	t.Logf("provisioning %s with idle threshold=%d min", vmName, thresholdMinutes)
+	vm, err := p.Provision(ctx, provider.ProvisionSpec{
+		Name:             vmName,
+		Zone:             zone,
+		MachineType:      "e2-small",
+		DiskGB:           20,
+		DiskType:         "pd-standard",
+		SSHKeyPub:        pubKey,
+		Tags:             []string{"moorpost-test"},
+		StartImmediately: true,
+		BootstrapScript:  bootScript,
+	})
+
+	t.Cleanup(func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancelCleanup()
+		t.Logf("CLEANUP: destroying %s", vmName)
+		if cerr := p.Destroy(cleanupCtx, vmName); cerr != nil {
+			t.Errorf("CLEANUP FAILED: %v — please run: gcloud compute instances delete %s --zone=%s --project=%s --quiet",
+				cerr, vmName, zone, project)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	t.Logf("provisioned: %s", vm.ID)
+
+	// Wait for bootstrap to finish (claude installed). Reuses iter 18's pattern.
+	// Deadline is 15 minutes — bootstrap normally finishes in ~5–7 min, but
+	// security.ubuntu.com is occasionally throttled to 100KB/s which can push
+	// apt-get update alone past 7 min (observed during iter 39's first run).
+	t.Log("polling SSH for bootstrap completion...")
+	bootstrapDeadline := time.Now().Add(15 * time.Minute)
+	bootstrapped := false
+	for time.Now().Before(bootstrapDeadline) {
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, 30*time.Second)
+		out, _, code, _ := runGcloud(attemptCtx,
+			"compute", "ssh", vmName,
+			"--project="+project, "--zone="+zone, "--quiet",
+			"--command=command -v claude >/dev/null && systemctl is-active moorpost-idle.timer 2>/dev/null || echo PENDING")
+		cancelAttempt()
+		s := strings.TrimSpace(string(out))
+		if code == 0 && s == "active" {
+			bootstrapped = true
+			break
+		}
+		t.Logf("bootstrap pending (got %q)", abbrev(s, 60))
+		select {
+		case <-ctx.Done():
+			t.Fatalf("ctx canceled during bootstrap polling")
+		case <-time.After(20 * time.Second):
+		}
+	}
+	if !bootstrapped {
+		t.Fatal("bootstrap did not finish within 10m (claude or moorpost-idle.timer missing)")
+	}
+	t.Log("✓ bootstrap done; moorpost-idle.timer is active")
+
+	// Now the critical phase: do nothing. The polling SSH calls above each
+	// open + close an ssh session. After the last one, no SSH session
+	// remains; no tmux server; no mutagen-agent. The idle-check script
+	// should see all three signals at zero on its next 5-min tick and
+	// (with threshold=5) stop the VM after one tick.
+	//
+	// Wall-clock from "no more SSH" to "VM TERMINATED": the systemd
+	// OnUnitActiveSec=5min timer fires every 5 minutes; the script then
+	// runs `sudo shutdown -h now`. GCE detects shutdown within ~30s and
+	// transitions the instance to TERMINATED. Worst-case wait: ~6 min.
+	// Budget: 15 min to give comfortable margin.
+	t.Log("✓ all SSH closed; waiting for VM to auto-stop (≤15min)...")
+	stopDeadline := time.Now().Add(15 * time.Minute)
+	pollInterval := 60 * time.Second
+	stopped := false
+	var lastStatus string
+	for time.Now().Before(stopDeadline) {
+		statusCtx, cancelStatus := context.WithTimeout(ctx, 30*time.Second)
+		out, _, scode, _ := runGcloud(statusCtx,
+			"compute", "instances", "describe", vmName,
+			"--project="+project, "--zone="+zone,
+			"--format=value(status)")
+		cancelStatus()
+		lastStatus = strings.TrimSpace(string(out))
+		if scode == 0 {
+			t.Logf("VM status: %s (%s elapsed)", lastStatus, time.Since(stopDeadline.Add(-15*time.Minute)).Round(time.Second))
+			if lastStatus == "TERMINATED" || lastStatus == "STOPPED" || lastStatus == "STOPPING" {
+				stopped = true
+				break
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("ctx canceled during stop polling")
+		case <-time.After(pollInterval):
+		}
+	}
+	if !stopped {
+		// Diagnostics: pull the idle log + systemd state via SSH (if VM is
+		// still reachable). Best-effort; cleanup will destroy regardless.
+		diagCtx, cancelDiag := context.WithTimeout(ctx, 60*time.Second)
+		diag, _, _, _ := runGcloud(diagCtx,
+			"compute", "ssh", vmName,
+			"--project="+project, "--zone="+zone, "--quiet",
+			"--command=echo === idle log ===; sudo cat /var/log/moorpost-idle.log 2>/dev/null | tail -30; echo === counter ===; sudo cat /var/lib/moorpost/idle_minutes 2>/dev/null; echo === timer ===; systemctl status moorpost-idle.timer --no-pager 2>&1 | head -20")
+		cancelDiag()
+		t.Errorf("VM did not stop within 15m; last status=%s\nDiagnostics:\n%s",
+			lastStatus, lastTail(string(diag), 3000))
+		return
+	}
+	t.Logf("✓ VM auto-stopped to %s (idle threshold=%d min)", lastStatus, thresholdMinutes)
+	t.Logf("✓ persistent-mode auto-stop E2E passed")
+}
+
 func abbrev(s string, n int) string {
 	if len(s) <= n {
 		return s
