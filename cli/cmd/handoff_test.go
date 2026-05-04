@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -409,4 +410,167 @@ func TestRunCostUnknownPeriod(t *testing.T) {
 	if err := RunCost(context.Background(), &out, c, "yearly", false); err == nil {
 		t.Error("RunCost accepted unknown period")
 	}
+}
+
+// --- iter 35: --prefer-local / --prefer-remote conflict detection ---
+
+func TestRunHandoffRejectsBothPreferFlags(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:   true,
+		PreferLocal:  true,
+		PreferRemote: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("err = %v, want mutually-exclusive error", err)
+	}
+	// VM should not have been started.
+	if len(fp.startCalls) != 0 {
+		t.Error("Start should not be called when both flags conflict")
+	}
+}
+
+// TestRunHandoffWritesWatermarkOnFirstHandoff: with no prior watermark
+// and an existing session-state directory, handoff proceeds and writes
+// the manifest hash to state.LastSessionSyncHash.
+func TestRunHandoffWritesWatermarkOnFirstHandoff(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	stateRoot := t.TempDir()
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "x"},
+		sessionStateRoot: stateRoot,
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	// Populate the session-state dir so the manifest is non-empty.
+	sessionDir := stateRoot + c.ProjectDir
+	if err := osMkdirAllForTest(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := osWriteFileForTest(sessionDir+"/state.json", []byte(`{"k":1}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	if err != nil {
+		t.Fatalf("first handoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.LastSessionSyncHash == "" {
+		t.Error("LastSessionSyncHash not set after successful handoff")
+	}
+}
+
+// TestRunHandoffPreferRemoteAbortsOnDivergence: after a successful
+// handoff sets the watermark, a subsequent local edit (changing the
+// manifest) plus --prefer-remote should abort.
+func TestRunHandoffPreferRemoteAbortsOnDivergence(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	stateRoot := t.TempDir()
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "x"},
+		sessionStateRoot: stateRoot,
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	sessionDir := stateRoot + c.ProjectDir
+	_ = osMkdirAllForTest(sessionDir)
+	_ = osWriteFileForTest(sessionDir+"/v1.json", []byte(`{"v":1}`))
+
+	// First handoff: succeeds, watermark gets set.
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err != nil {
+		t.Fatalf("first handoff: %v", err)
+	}
+	// Reset for second handoff: state shows ActiveSide=local again.
+	_ = state.WithLock(c.StatePath, func(s *state.State) error {
+		ps := s.Projects[c.ProjectDir]
+		ps.ActiveSide = state.SideLocal
+		s.SetProject(c.ProjectDir, ps)
+		return nil
+	})
+	c.State, _ = state.Open(c.StatePath)
+
+	// Modify session state — local now diverges from the watermark.
+	_ = osWriteFileForTest(sessionDir+"/v2.json", []byte(`{"v":2}`))
+
+	// Second handoff with --prefer-remote should refuse.
+	out.Reset()
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:   true,
+		PreferRemote: true,
+	})
+	if err == nil {
+		t.Fatal("expected --prefer-remote to abort on local divergence")
+	}
+	if !strings.Contains(err.Error(), "local session state has changed") {
+		t.Errorf("err message doesn't explain divergence: %v", err)
+	}
+}
+
+// TestRunHandoffPreferLocalProceedsOnDivergence: same setup as the
+// abort test, but --prefer-local should proceed and update the
+// watermark to the new manifest.
+func TestRunHandoffPreferLocalProceedsOnDivergence(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	stateRoot := t.TempDir()
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "x"},
+		sessionStateRoot: stateRoot,
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	sessionDir := stateRoot + c.ProjectDir
+	_ = osMkdirAllForTest(sessionDir)
+	_ = osWriteFileForTest(sessionDir+"/v1.json", []byte(`{"v":1}`))
+
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err != nil {
+		t.Fatalf("first handoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	firstWatermark := ps.LastSessionSyncHash
+
+	_ = state.WithLock(c.StatePath, func(s *state.State) error {
+		p := s.Projects[c.ProjectDir]
+		p.ActiveSide = state.SideLocal
+		s.SetProject(c.ProjectDir, p)
+		return nil
+	})
+	c.State, _ = state.Open(c.StatePath)
+
+	_ = osWriteFileForTest(sessionDir+"/v2.json", []byte(`{"v":2}`))
+
+	out.Reset()
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		PreferLocal: true,
+	}); err != nil {
+		t.Fatalf("--prefer-local handoff: %v", err)
+	}
+	st, _ = state.Open(c.StatePath)
+	ps, _ = st.GetProject(c.ProjectDir)
+	if ps.LastSessionSyncHash == "" || ps.LastSessionSyncHash == firstWatermark {
+		t.Errorf("watermark not updated after --prefer-local: first=%q now=%q", firstWatermark, ps.LastSessionSyncHash)
+	}
+}
+
+// Helpers — kept in this file (not lifecycle_test) so other suites don't
+// pick them up as test funcs.
+func osMkdirAllForTest(p string) error {
+	return os.MkdirAll(p, 0o755)
+}
+
+func osWriteFileForTest(p string, b []byte) error {
+	return os.WriteFile(p, b, 0o600)
 }

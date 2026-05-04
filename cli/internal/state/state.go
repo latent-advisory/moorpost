@@ -40,6 +40,13 @@ type ProjectState struct {
 	LastReturn      time.Time `json:"last_return,omitempty"`
 	AgentSessionID   string    `json:"agent_session_id"`
 	SyncSessionID    string    `json:"sync_session_id"`
+
+	// LastSessionSyncHash is the SHA-256 manifest hash of
+	// ~/.claude/projects/<encoded>/ as of the last successful handoff or
+	// return. Used by `moorpost handoff` / `moorpost return` to detect
+	// the session-state-conflict case spec'd in PLUGIN.md §6.5 line 261.
+	// Empty means "no successful sync yet" — first handoff will set it.
+	LastSessionSyncHash string `json:"last_session_sync_hash,omitempty"`
 }
 
 // VMRecord caches metadata about a VM. The provider's API is the source of

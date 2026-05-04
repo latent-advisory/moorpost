@@ -11,6 +11,7 @@ import (
 
 	"github.com/latent-advisory/moorpost/cli/internal/agent"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
+	"github.com/latent-advisory/moorpost/cli/internal/session"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 	"github.com/spf13/cobra"
@@ -33,20 +34,26 @@ the laptop and the work continues on the VM.`,
 			return err
 		}
 		return RunHandoff(cmd.Context(), cmd.OutOrStdout(), cmd.InOrStdin(), c, HandoffOptions{
-			SkipPrompt:  handoffFlagYes,
-			OverrideCap: handoffFlagOverrideCap,
+			SkipPrompt:   handoffFlagYes,
+			OverrideCap:  handoffFlagOverrideCap,
+			PreferLocal:  handoffFlagPreferLocal,
+			PreferRemote: handoffFlagPreferRemote,
 		})
 	},
 }
 
 var (
-	handoffFlagYes         bool
-	handoffFlagOverrideCap bool
+	handoffFlagYes          bool
+	handoffFlagOverrideCap  bool
+	handoffFlagPreferLocal  bool
+	handoffFlagPreferRemote bool
 )
 
 func init() {
 	handoffCmd.Flags().BoolVarP(&handoffFlagYes, "yes", "y", false, "skip the confirmation prompt")
 	handoffCmd.Flags().BoolVar(&handoffFlagOverrideCap, "override-cap", false, "bypass cost.monthly_cap_usd")
+	handoffCmd.Flags().BoolVar(&handoffFlagPreferLocal, "prefer-local", false, "force-push local session state, overwriting any divergence on the remote")
+	handoffCmd.Flags().BoolVar(&handoffFlagPreferRemote, "prefer-remote", false, "abort handoff if local has diverged since last sync (use this when remote should win)")
 	rootCmd.AddCommand(handoffCmd)
 }
 
@@ -54,6 +61,13 @@ func init() {
 type HandoffOptions struct {
 	SkipPrompt  bool
 	OverrideCap bool
+	// PreferLocal forces a push regardless of local divergence; equivalent
+	// to "I know my local copy is right, overwrite anything else."
+	PreferLocal bool
+	// PreferRemote refuses to push when local has diverged since last
+	// sync — i.e., asserts remote should win. Use when local is suspected
+	// to be corrupt or stale.
+	PreferRemote bool
 	// Now overrides time.Now for deterministic testing of timestamps.
 	Now func() time.Time
 	// IPWaitTimeout overrides the default 60s.
@@ -67,6 +81,9 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	}
 	if c == nil || c.Provider == nil || c.Agent == nil || c.Sync == nil {
 		return errors.New("handoff: incomplete context (need provider, agent, sync)")
+	}
+	if opts.PreferLocal && opts.PreferRemote {
+		return errors.New("handoff: --prefer-local and --prefer-remote are mutually exclusive")
 	}
 	now := opts.Now
 	if now == nil {
@@ -127,7 +144,24 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	// BEFORE Resume so the remote claude --resume sees the latest state.
 	// (Project files are handled by the continuous sync below.)
 	localState := c.Agent.SessionStatePath(c.ProjectDir)
+	var localManifest string
 	if localState != "" {
+		// Compute the local session-state manifest. If it's diverged from
+		// the watermark recorded at the last successful sync, the user has
+		// modified local since last handoff/return. That's expected on
+		// handoff (active=local), so by default we proceed. But if the
+		// user passed --prefer-remote, they want the remote to win — we
+		// must NOT silently overwrite remote with diverged local. Abort.
+		var manifestErr error
+		localManifest, manifestErr = session.LocalManifest(localState)
+		if manifestErr != nil {
+			fmt.Fprintf(out, "warning: could not compute local session-state manifest: %v\n", manifestErr)
+		}
+		localDiverged := manifestErr == nil && ps.LastSessionSyncHash != "" && localManifest != ps.LastSessionSyncHash
+		if localDiverged && opts.PreferRemote {
+			return fmt.Errorf("handoff: local session state has changed since last sync (--prefer-remote refuses to overwrite local with remote without explicit --prefer-local; if you really want remote to win, run `moorpost return --prefer-remote` first)")
+		}
+
 		remoteState := remoteSessionStateFor(c)
 		fmt.Fprintf(out, "Syncing agent session state → %s ...\n", tgt.Host)
 		if err := c.Sync.OneShot(ctx,
@@ -169,10 +203,15 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	}
 
 	// Update state with handoff metadata + new continuous sync session ID.
+	// Also bump the session-state watermark to the manifest we just pushed,
+	// so the next handoff/return can detect divergence against this point.
 	if err := withProjectState(c, func(p *state.ProjectState) error {
 		p.LastHandoff = now()
 		p.ActiveSide = state.SideRemote
 		p.SyncSessionID = string(syncID)
+		if localManifest != "" {
+			p.LastSessionSyncHash = localManifest
+		}
 		return nil
 	}); err != nil {
 		return err
