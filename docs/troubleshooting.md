@@ -10,7 +10,9 @@ provision: gcp preflight failed:
     fix: gcloud services enable compute.googleapis.com --project=your-project
 ```
 
-**Fix:** copy-paste the `gcloud services enable` command from the error message. One-time, free, additive.
+**Fix (one-liner):** `moorpost doctor --fix` runs the enable command for you against the configured project. One-time, free, additive.
+
+**Manual fix:** copy-paste the `gcloud services enable` command from the error message.
 
 ---
 

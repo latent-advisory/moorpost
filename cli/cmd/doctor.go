@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 
 	"github.com/latent-advisory/moorpost/cli/internal/keychain"
 	_ "github.com/latent-advisory/moorpost/cli/internal/provider"
@@ -14,22 +15,89 @@ import (
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run diagnostics: check that all Moorpost prerequisites are present",
+	Long: `Runs a series of checks to confirm Moorpost prerequisites are
+satisfied: required binaries on PATH, OS keychain reachable, and (when in
+a project directory) the configured Provider's preflight.
+
+With --fix, attempts to auto-resolve known issues (currently: enabling
+the Compute Engine API on the configured GCP project).`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		checks := defaultDoctorChecks()
 		// If a project config is reachable from cwd, also run the configured
 		// Provider's preflight (e.g. GCP auth + API enablement).
+		ctx := cmd.Context()
+		if ctx == nil {
+			ctx = context.Background()
+		}
 		if c, err := loadProjectContext(ContextOptions{
 			Stdout: cmd.OutOrStdout(),
 			Stderr: cmd.ErrOrStderr(),
 		}); err == nil && c.Provider != nil {
 			checks = append(checks, checkProviderPreflight(c.Provider, c.Config.Provider.Type))
+			if doctorFlagFix {
+				// Run the doctor checks first; then if the gcp-preflight
+				// reported API-disabled, run the fix and re-run the check.
+				if err := RunDoctor(ctx, cmd.OutOrStdout(), checks); err != nil {
+					if applied, ferr := tryFixComputeAPI(ctx, cmd.OutOrStdout(), c); ferr != nil {
+						return ferr
+					} else if applied {
+						fmt.Fprintln(cmd.OutOrStdout(), "Re-running doctor after fix...")
+						return RunDoctor(ctx, cmd.OutOrStdout(), checks)
+					}
+					return err
+				}
+				return nil
+			}
 		}
-		return RunDoctor(cmd.Context(), cmd.OutOrStdout(), checks)
+		return RunDoctor(ctx, cmd.OutOrStdout(), checks)
 	},
 }
 
+var doctorFlagFix bool
+
 func init() {
+	doctorCmd.Flags().BoolVar(&doctorFlagFix, "fix", false, "attempt to auto-fix known issues (e.g., enable Compute Engine API)")
 	rootCmd.AddCommand(doctorCmd)
+}
+
+// computeAPIDisabledRE detects the specific preflight failure that we know
+// how to auto-fix.
+var computeAPIDisabledRE = regexp.MustCompile(`Compute Engine API not enabled on project "([^"]+)"`)
+
+// fixGCPRunner is the runner the fix code uses; swappable for tests. Defaults
+// to a plain os/exec runner that streams output to stdout/stderr.
+var fixGCPRunner = func(ctx context.Context, w io.Writer, name string, args ...string) error {
+	c := exec.CommandContext(ctx, name, args...)
+	c.Stdout = w
+	c.Stderr = w
+	return c.Run()
+}
+
+// tryFixComputeAPI inspects the most recent preflight failure and, if it's
+// the API-disabled case, runs `gcloud services enable compute.googleapis.com`
+// against the configured project. Returns (applied, err): applied=true
+// means a fix was attempted; err is non-nil only on actual failure.
+func tryFixComputeAPI(ctx context.Context, out io.Writer, c *Context) (bool, error) {
+	if c == nil || c.Provider == nil || c.Config == nil {
+		return false, nil
+	}
+	// Re-run preflight to get the current error string.
+	err := c.Provider.Preflight(ctx)
+	if err == nil {
+		return false, nil
+	}
+	m := computeAPIDisabledRE.FindStringSubmatch(err.Error())
+	if m == nil {
+		return false, nil
+	}
+	project := m[1]
+	fmt.Fprintf(out, "→ Auto-fix: gcloud services enable compute.googleapis.com --project=%s\n", project)
+	if rerr := fixGCPRunner(ctx, out, "gcloud", "services", "enable",
+		"compute.googleapis.com", "--project="+project); rerr != nil {
+		return true, fmt.Errorf("doctor --fix: enable Compute API: %w", rerr)
+	}
+	fmt.Fprintln(out, "  done.")
+	return true, nil
 }
 
 // CheckResult captures the outcome of one doctor check. Severity is one of
