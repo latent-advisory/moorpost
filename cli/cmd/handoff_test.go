@@ -63,6 +63,9 @@ type cmdFakeSync struct {
 	startErr         error
 	stopCalls        []mpsync.SyncSessionID
 	stopErr          error
+
+	conflicts        []mpsync.Conflict
+	listConflictsErr error
 }
 
 type oneShotRecord struct {
@@ -93,6 +96,12 @@ func (f *cmdFakeSync) Status(context.Context, mpsync.SyncSessionID) (mpsync.Sync
 func (f *cmdFakeSync) Stop(_ context.Context, id mpsync.SyncSessionID) error {
 	f.stopCalls = append(f.stopCalls, id)
 	return f.stopErr
+}
+func (f *cmdFakeSync) ListConflicts(_ context.Context, _ mpsync.SyncSessionID) ([]mpsync.Conflict, error) {
+	if f.listConflictsErr != nil {
+		return nil, f.listConflictsErr
+	}
+	return f.conflicts, nil
 }
 
 func makeHandoffContext(t *testing.T, fp *fakeProvider, fa *cmdFakeAgent, fs *cmdFakeSync, activeSide state.Side) *Context {

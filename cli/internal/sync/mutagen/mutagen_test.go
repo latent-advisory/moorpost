@@ -392,3 +392,188 @@ func argsContain(args []string, want string) bool {
 	}
 	return false
 }
+
+// --- ListConflicts tests (iter 34) ---
+
+func TestListConflicts_RequiresNonEmptyID(t *testing.T) {
+	e := newEngine(t, &captureExec{})
+	if _, err := e.ListConflicts(context.Background(), ""); err == nil {
+		t.Error("ListConflicts accepted empty id")
+	}
+}
+
+func TestListConflicts_NoConflicts_EmptyArray(t *testing.T) {
+	c := &captureExec{
+		resp: []captureCall{{stdout: []byte(`[{"conflicts": []}]`), exitCode: 0}},
+	}
+	e := newEngine(t, c)
+	got, err := e.ListConflicts(context.Background(), "argus-sync")
+	if err != nil {
+		t.Fatalf("ListConflicts: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected 0 conflicts, got %d: %+v", len(got), got)
+	}
+	// Verify the right CLI was invoked.
+	if len(c.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(c.calls))
+	}
+	for _, want := range []string{"sync", "list", "argus-sync", "--json"} {
+		if !argsContain(c.calls[0].args, want) {
+			t.Errorf("call missing arg %q: %v", want, c.calls[0].args)
+		}
+	}
+}
+
+func TestListConflicts_NoMatchingSession_ReturnsErrSessionNotFound(t *testing.T) {
+	c := &captureExec{
+		resp: []captureCall{{
+			stderr:   []byte("error: no matching sessions\n"),
+			exitCode: 1,
+		}},
+	}
+	e := newEngine(t, c)
+	_, err := e.ListConflicts(context.Background(), "ghost")
+	if !errors.Is(err, mpsync.ErrSessionNotFound) {
+		t.Errorf("err = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestListConflicts_GenericExitFailure(t *testing.T) {
+	c := &captureExec{
+		resp: []captureCall{{
+			stderr:   []byte("error: connection lost\n"),
+			exitCode: 1,
+		}},
+	}
+	e := newEngine(t, c)
+	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	if err == nil {
+		t.Fatal("expected error on non-zero exit")
+	}
+	if errors.Is(err, mpsync.ErrSessionNotFound) {
+		t.Errorf("non-'no matching sessions' error misclassified as ErrSessionNotFound: %v", err)
+	}
+}
+
+func TestListConflicts_EmptyStdout_ReturnsErrSessionNotFound(t *testing.T) {
+	c := &captureExec{
+		resp: []captureCall{{stdout: []byte(""), exitCode: 0}},
+	}
+	e := newEngine(t, c)
+	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	if !errors.Is(err, mpsync.ErrSessionNotFound) {
+		t.Errorf("empty stdout: err = %v, want ErrSessionNotFound", err)
+	}
+}
+
+func TestListConflicts_MalformedJSON(t *testing.T) {
+	c := &captureExec{
+		resp: []captureCall{{stdout: []byte("not-json"), exitCode: 0}},
+	}
+	e := newEngine(t, c)
+	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	if err == nil {
+		t.Fatal("expected parse error for malformed JSON")
+	}
+	if !strings.Contains(err.Error(), "parse") {
+		t.Errorf("error doesn't mention parse: %v", err)
+	}
+}
+
+// TestParseConflictsJSON_HappyPath drives parseConflictsJSON directly so the
+// fixture stays close to the parser logic. Three-conflict sample exercising:
+// modified-on-both-sides (the common case), deletion vs. modification,
+// creation-only on one side.
+func TestParseConflictsJSON_HappyPath(t *testing.T) {
+	fixture := `[{
+		"conflicts": [
+			{
+				"alphaChanges": [
+					{"path": "src/main.go", "new": {"modified": "2026-05-04T10:00:00Z"}, "old": {"modified": "2026-05-04T09:00:00Z"}}
+				],
+				"betaChanges": [
+					{"path": "src/main.go", "new": {"modified": "2026-05-04T10:30:00Z"}, "old": {"modified": "2026-05-04T09:00:00Z"}}
+				]
+			},
+			{
+				"alphaChanges": [
+					{"path": "old/file.txt", "old": {"modified": "2026-05-03T08:00:00Z"}}
+				],
+				"betaChanges": [
+					{"path": "old/file.txt", "new": {"modified": "2026-05-04T11:00:00Z"}, "old": {"modified": "2026-05-03T08:00:00Z"}}
+				]
+			},
+			{
+				"alphaChanges": [
+					{"path": "new/added.md", "new": {"modified": "2026-05-04T12:00:00Z"}}
+				],
+				"betaChanges": []
+			}
+		]
+	}]`
+	got, err := parseConflictsJSON(fixture)
+	if err != nil {
+		t.Fatalf("parseConflictsJSON: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 conflicts, got %d", len(got))
+	}
+
+	// Conflict 0: modified on both sides
+	if got[0].Path != "src/main.go" {
+		t.Errorf("conflict 0 path = %q, want src/main.go", got[0].Path)
+	}
+	if got[0].AlphaKind != mpsync.ChangeKindModified {
+		t.Errorf("conflict 0 alpha kind = %q, want modified", got[0].AlphaKind)
+	}
+	if got[0].BetaKind != mpsync.ChangeKindModified {
+		t.Errorf("conflict 0 beta kind = %q, want modified", got[0].BetaKind)
+	}
+	// Beta has the later mtime (10:30 vs 10:00 alpha).
+	if got[0].BetaModifiedAt.IsZero() {
+		t.Errorf("conflict 0 beta mtime zero; expected RFC3339-parsed value")
+	}
+
+	// Conflict 1: deleted on alpha, modified on beta
+	if got[1].AlphaKind != mpsync.ChangeKindDeleted {
+		t.Errorf("conflict 1 alpha kind = %q, want deleted", got[1].AlphaKind)
+	}
+	if got[1].BetaKind != mpsync.ChangeKindModified {
+		t.Errorf("conflict 1 beta kind = %q, want modified", got[1].BetaKind)
+	}
+
+	// Conflict 2: created on alpha, untouched on beta
+	if got[2].AlphaKind != mpsync.ChangeKindCreated {
+		t.Errorf("conflict 2 alpha kind = %q, want created", got[2].AlphaKind)
+	}
+	if got[2].BetaKind != mpsync.ChangeKindUnknown {
+		t.Errorf("conflict 2 beta kind = %q, want unknown (no changes)", got[2].BetaKind)
+	}
+}
+
+func TestParseConflictsJSON_EmptyArray(t *testing.T) {
+	got, err := parseConflictsJSON(`[]`)
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if got != nil {
+		t.Errorf("expected nil for empty session array, got %v", got)
+	}
+}
+
+func TestParseConflictsJSON_PathFromBetaWhenAlphaEmpty(t *testing.T) {
+	// Alpha has no changes (path empty); beta has the path. pickConflictPath
+	// should fall back to beta.
+	fixture := `[{"conflicts": [{
+		"alphaChanges": [],
+		"betaChanges": [{"path": "remote-only.txt", "new": {"modified": "2026-05-04T00:00:00Z"}}]
+	}]}]`
+	got, err := parseConflictsJSON(fixture)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0].Path != "remote-only.txt" {
+		t.Errorf("path fallback failed: %+v", got)
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"sort"
 	stdsync "sync"
+	"time"
 )
 
 // Direction is the direction of a one-shot sync. Bidirectional is reserved
@@ -72,6 +73,43 @@ type SyncStatus struct {
 	BetaPath  string
 }
 
+// ChangeKind is the kind of change observed on one side of a conflict.
+// Mutagen reports several finer-grained kinds; we collapse them into the
+// minimum set the user needs to make a resolution decision.
+type ChangeKind string
+
+const (
+	ChangeKindUnknown  ChangeKind = "unknown"
+	ChangeKindCreated  ChangeKind = "created"
+	ChangeKindModified ChangeKind = "modified"
+	ChangeKindDeleted  ChangeKind = "deleted"
+	ChangeKindRenamed  ChangeKind = "renamed"
+)
+
+// Conflict describes one unresolved sync conflict — a single path where
+// alpha and beta have diverged in a way the engine couldn't auto-resolve.
+//
+// Either AlphaKind or BetaKind (or both) will be non-Unknown; if both are
+// Unknown the engine should not have surfaced this entry. Modification
+// timestamps are best-effort: an engine may not track them, in which case
+// the field is the zero time.Time.
+type Conflict struct {
+	// Path is the relative path within the sync root where the conflict
+	// occurred. Always present.
+	Path string
+
+	// AlphaKind / BetaKind describe what each side did to Path. Use
+	// ChangeKindUnknown when one side was untouched.
+	AlphaKind ChangeKind
+	BetaKind  ChangeKind
+
+	// AlphaModifiedAt / BetaModifiedAt are the wall-clock times at which
+	// each side last modified Path. Zero value if the engine didn't
+	// report it.
+	AlphaModifiedAt time.Time
+	BetaModifiedAt  time.Time
+}
+
 // SyncState is the operational state of a sync session.
 type SyncState string
 
@@ -110,6 +148,11 @@ type Sync interface {
 
 	// Status returns the current state of the session.
 	Status(ctx context.Context, id SyncSessionID) (SyncStatus, error)
+
+	// ListConflicts returns details on every unresolved conflict in the
+	// session. An empty slice means "no conflicts" (success). Returns
+	// ErrSessionNotFound if the session is unknown to the engine.
+	ListConflicts(ctx context.Context, id SyncSessionID) ([]Conflict, error)
 
 	// Stop terminates the session. After Stop, the SyncSessionID is invalid.
 	Stop(ctx context.Context, id SyncSessionID) error

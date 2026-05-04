@@ -18,6 +18,9 @@ func (f *fakeSync) Status(context.Context, SyncSessionID) (SyncStatus, error) {
 	return SyncStatus{}, nil
 }
 func (f *fakeSync) Stop(context.Context, SyncSessionID) error { return nil }
+func (f *fakeSync) ListConflicts(context.Context, SyncSessionID) ([]Conflict, error) {
+	return nil, nil
+}
 
 func newFake(id string) Constructor {
 	return func(map[string]any) (Sync, error) { return &fakeSync{id: id}, nil }

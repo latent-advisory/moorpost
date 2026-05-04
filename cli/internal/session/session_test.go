@@ -65,6 +65,9 @@ func (stubSync) Status(context.Context, sync.SyncSessionID) (sync.SyncStatus, er
 	return sync.SyncStatus{}, nil
 }
 func (stubSync) Stop(context.Context, sync.SyncSessionID) error { return nil }
+func (stubSync) ListConflicts(context.Context, sync.SyncSessionID) ([]sync.Conflict, error) {
+	return nil, nil
+}
 
 func TestNew(t *testing.T) {
 	s := New(stubProvider{}, stubAgent{}, stubSync{}, "argus", "/Users/x/argus")

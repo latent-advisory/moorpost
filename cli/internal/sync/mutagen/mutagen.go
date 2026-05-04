@@ -7,9 +7,11 @@ package mutagen
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	mpexec "github.com/latent-advisory/moorpost/cli/internal/exec"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
@@ -225,6 +227,157 @@ func (e *engine) Status(ctx context.Context, id mpsync.SyncSessionID) (mpsync.Sy
 		st.BetaPath = parts[3]
 	}
 	return st, nil
+}
+
+// listJSONSession is the subset of `mutagen sync list --json` output that
+// we consume. Mutagen's full schema has many more fields; we only declare
+// what's needed to surface conflict details.
+type listJSONSession struct {
+	Conflicts []listJSONConflict `json:"conflicts"`
+}
+
+type listJSONConflict struct {
+	// Mutagen reports a list of changes per side rather than a single
+	// path. In moorpost's surface we collapse to the first change's path
+	// (which is the conflict locus) and use the latest mtime + the
+	// dominant kind across the side's changes.
+	AlphaChanges []listJSONChange `json:"alphaChanges"`
+	BetaChanges  []listJSONChange `json:"betaChanges"`
+}
+
+type listJSONChange struct {
+	Path string             `json:"path"`
+	New  *listJSONEntry     `json:"new,omitempty"`
+	Old  *listJSONEntry     `json:"old,omitempty"`
+}
+
+type listJSONEntry struct {
+	// Modified is RFC3339; absent means mutagen didn't track an mtime.
+	Modified string `json:"modified,omitempty"`
+}
+
+// ListConflicts implements mpsync.Sync.ListConflicts via
+// `mutagen sync list <id> --json`.
+func (e *engine) ListConflicts(ctx context.Context, id mpsync.SyncSessionID) ([]mpsync.Conflict, error) {
+	if id == "" {
+		return nil, errors.New("mutagen: ListConflicts requires a non-empty session id")
+	}
+	stdout, stderr, code, err := e.exec.Run(ctx, e.binary,
+		[]string{"sync", "list", string(id), "--json"}, nil)
+	if err != nil {
+		return nil, fmt.Errorf("mutagen sync list --json: %w", err)
+	}
+	if code != 0 {
+		stderrStr := string(stderr)
+		if strings.Contains(stderrStr, "no matching sessions") {
+			return nil, mpsync.ErrSessionNotFound
+		}
+		return nil, fmt.Errorf("mutagen sync list --json exit %d: %s", code, strings.TrimSpace(stderrStr))
+	}
+	out := strings.TrimSpace(string(stdout))
+	if out == "" {
+		return nil, mpsync.ErrSessionNotFound
+	}
+	return parseConflictsJSON(out)
+}
+
+// parseConflictsJSON is the pure-data entry point for tests.
+func parseConflictsJSON(s string) ([]mpsync.Conflict, error) {
+	// Mutagen's --json output is a JSON array (one entry per session in
+	// the matching list). When the user passes an explicit session id the
+	// array length is 0 or 1.
+	var sessions []listJSONSession
+	if err := json.Unmarshal([]byte(s), &sessions); err != nil {
+		return nil, fmt.Errorf("mutagen list --json: parse: %w", err)
+	}
+	if len(sessions) == 0 {
+		return nil, nil
+	}
+	var out []mpsync.Conflict
+	for _, c := range sessions[0].Conflicts {
+		conflict := mpsync.Conflict{
+			Path:      pickConflictPath(c),
+			AlphaKind: dominantKind(c.AlphaChanges),
+			BetaKind:  dominantKind(c.BetaChanges),
+		}
+		conflict.AlphaModifiedAt = latestMTime(c.AlphaChanges)
+		conflict.BetaModifiedAt = latestMTime(c.BetaChanges)
+		out = append(out, conflict)
+	}
+	return out, nil
+}
+
+// pickConflictPath returns the conflict's representative path. Mutagen's
+// alphaChanges/betaChanges may each list multiple paths (rare in practice
+// for a single-file conflict). We pick the first non-empty path from
+// either side. Empty path is reported as "" — caller can choose how to
+// display.
+func pickConflictPath(c listJSONConflict) string {
+	for _, ch := range c.AlphaChanges {
+		if ch.Path != "" {
+			return ch.Path
+		}
+	}
+	for _, ch := range c.BetaChanges {
+		if ch.Path != "" {
+			return ch.Path
+		}
+	}
+	return ""
+}
+
+// dominantKind translates a side's change list into a single ChangeKind.
+// Heuristic: if any change is "deleted" (Old set, New nil) — deleted;
+// else if any is "created" (New set, Old nil) — created;
+// else modified; else unknown.
+func dominantKind(changes []listJSONChange) mpsync.ChangeKind {
+	if len(changes) == 0 {
+		return mpsync.ChangeKindUnknown
+	}
+	hasDelete := false
+	hasCreate := false
+	hasModify := false
+	for _, ch := range changes {
+		switch {
+		case ch.New == nil && ch.Old != nil:
+			hasDelete = true
+		case ch.New != nil && ch.Old == nil:
+			hasCreate = true
+		case ch.New != nil && ch.Old != nil:
+			hasModify = true
+		}
+	}
+	switch {
+	case hasDelete:
+		return mpsync.ChangeKindDeleted
+	case hasCreate:
+		return mpsync.ChangeKindCreated
+	case hasModify:
+		return mpsync.ChangeKindModified
+	default:
+		return mpsync.ChangeKindUnknown
+	}
+}
+
+// latestMTime returns the most recent Modified timestamp across the side's
+// changes. Returns the zero Time if no entry has a parseable timestamp.
+func latestMTime(changes []listJSONChange) time.Time {
+	var latest time.Time
+	for _, ch := range changes {
+		for _, e := range []*listJSONEntry{ch.New, ch.Old} {
+			if e == nil || e.Modified == "" {
+				continue
+			}
+			t, err := time.Parse(time.RFC3339, e.Modified)
+			if err != nil {
+				continue
+			}
+			if t.After(latest) {
+				latest = t
+			}
+		}
+	}
+	return latest
 }
 
 // parseMutagenState maps mutagen's status strings to our enum. Mutagen has
