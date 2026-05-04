@@ -21,11 +21,13 @@ export class MoorpostTreeItem extends vscode.TreeItem {
     public readonly value: string,
     public readonly icon?: vscode.ThemeIcon,
     command?: vscode.Command,
+    contextValue?: string,
   ) {
     super(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
     this.tooltip = `${label}: ${value}`;
     if (icon) this.iconPath = icon;
     if (command) this.command = command;
+    if (contextValue) this.contextValue = contextValue;
   }
 }
 
@@ -79,13 +81,30 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
   ];
   if (s.active_side) {
     const icon = s.active_side === 'remote' ? 'cloud' : 'home';
+    // contextValue gates the right-click menu (handoff vs return) per
+    // package.json's view/item/context contributions.
+    const ctx = `moorpost.activeSide.${s.active_side}`;
     items.push(
-      new MoorpostTreeItem('Active side', s.active_side, new vscode.ThemeIcon(icon)),
+      new MoorpostTreeItem(
+        'Active side',
+        s.active_side,
+        new vscode.ThemeIcon(icon),
+        undefined,
+        ctx,
+      ),
     );
   }
   if (s.vm_id) {
     const vmDetail = s.vm_state ? `${s.vm_id} (${s.vm_state})` : s.vm_id;
-    items.push(new MoorpostTreeItem('VM', vmDetail, new vscode.ThemeIcon('vm')));
+    items.push(
+      new MoorpostTreeItem(
+        'VM',
+        vmDetail,
+        new vscode.ThemeIcon('vm'),
+        undefined,
+        'moorpost.vm',
+      ),
+    );
   }
   if (typeof s.month_to_date_usd === 'number' && s.month_to_date_usd > 0) {
     items.push(
@@ -93,6 +112,8 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
         'Cost (MTD)',
         `$${s.month_to_date_usd.toFixed(2)} (estimate)`,
         new vscode.ThemeIcon('credit-card'),
+        undefined,
+        'moorpost.cost',
       ),
     );
   }
@@ -106,6 +127,7 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
         value,
         new vscode.ThemeIcon(icon),
         { command: 'moorpost.showConflicts', title: 'Show conflicts' },
+        'moorpost.conflicts',
       ),
     );
   }

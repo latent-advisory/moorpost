@@ -66,6 +66,21 @@
         "command": "moorpost.showConflicts",
         "title": "Moorpost: Show sync conflicts",
         "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.attach",
+        "title": "Moorpost: Attach to remote tmux",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.destroy",
+        "title": "Moorpost: Destroy VM…",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.showCost",
+        "title": "Moorpost: Show cost details",
+        "category": "Moorpost"
       }
     ],
     "viewsContainers": {
@@ -92,6 +107,38 @@
           "command": "moorpost.refreshTree",
           "when": "view == moorpost.projectTree",
           "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "moorpost.handoff",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.activeSide.local",
+          "group": "moorpost@1"
+        },
+        {
+          "command": "moorpost.return",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.activeSide.remote",
+          "group": "moorpost@1"
+        },
+        {
+          "command": "moorpost.attach",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm",
+          "group": "moorpost@1"
+        },
+        {
+          "command": "moorpost.destroy",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm",
+          "group": "moorpost@9"
+        },
+        {
+          "command": "moorpost.showCost",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.cost",
+          "group": "moorpost@1"
+        },
+        {
+          "command": "moorpost.showConflicts",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.conflicts",
+          "group": "moorpost@1"
         }
       ]
     },

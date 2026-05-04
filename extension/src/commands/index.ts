@@ -85,5 +85,39 @@ export function registerCommands(
       }
       runInTerminal(['conflicts'], cwd);
     }),
+
+    vscode.commands.registerCommand('moorpost.attach', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      runInTerminal(['attach'], cwd);
+    }),
+
+    vscode.commands.registerCommand('moorpost.destroy', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      const choice = await vscode.window.showWarningMessage(
+        'Permanently destroy this VM and its boot disk? This cannot be undone.',
+        { modal: true },
+        'Destroy',
+      );
+      if (choice !== 'Destroy') return;
+      runInTerminal(['destroy', '--yes'], cwd);
+      refreshTreeAfter(8000);
+    }),
+
+    vscode.commands.registerCommand('moorpost.showCost', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      runInTerminal(['cost', '--explain'], cwd);
+    }),
   );
 }
