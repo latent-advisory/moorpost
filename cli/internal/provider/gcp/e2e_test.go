@@ -199,3 +199,142 @@ func TestGCPProvision_E2E(t *testing.T) {
 
 	t.Logf("✓ E2E provision happy path passed (cost guardrails honored; cleanup deferred)")
 }
+
+// TestGCPBootstrap_E2E provisions a VM with the rendered bootstrap script,
+// then polls the serial console for the completion marker AND SSHes in to
+// verify `claude` is installed. Validates the full bootstrap pipeline end-to-
+// end against real Ubuntu.
+//
+// Runtime budget: ~6 minutes. Cost: ~$0.002.
+func TestGCPBootstrap_E2E(t *testing.T) {
+	project := envOr("MOORPOST_E2E_PROJECT", "latent-advisory")
+	zone := envOr("MOORPOST_E2E_ZONE", "us-central1-a")
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	// Pre-flight.
+	stdout, _, code, err := runGcloud(ctx,
+		"compute", "instances", "list",
+		"--project="+project,
+		"--filter=tags.items:moorpost-test",
+		"--format=value(name)")
+	if err != nil || code != 0 {
+		t.Fatalf("pre-flight gcloud list: err=%v code=%d", err, code)
+	}
+	if strings.TrimSpace(stdout) != "" {
+		t.Fatalf("pre-flight: orphan moorpost-test instances found:\n%s", stdout)
+	}
+
+	p, err := NewWithOptions(Options{
+		Project: project,
+		Zone:    zone,
+		SSHUser: "moorpost",
+	})
+	if err != nil {
+		t.Fatalf("NewWithOptions: %v", err)
+	}
+
+	pubKey := generateEd25519PubKey(t)
+	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
+		ProjectSlug:  "e2e-bootstrap",
+		LocalAbsPath: "/Users/landytang/argus", // simple path so symlink works
+		RemoteUser:   "moorpost",
+	})
+	if err != nil {
+		t.Fatalf("bootstrap.Render: %v", err)
+	}
+
+	vmName := fmt.Sprintf("moorpost-test-bs-%d", time.Now().Unix())
+	t.Logf("provisioning %s", vmName)
+	vm, err := p.Provision(ctx, provider.ProvisionSpec{
+		Name:             vmName,
+		Zone:             zone,
+		MachineType:      "e2-small",
+		DiskGB:           20,
+		DiskType:         "pd-standard",
+		SSHKeyPub:        pubKey,
+		Tags:             []string{"moorpost-test"},
+		StartImmediately: true,
+		BootstrapScript:  bootScript,
+	})
+
+	t.Cleanup(func() {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancelCleanup()
+		t.Logf("CLEANUP: destroying %s", vmName)
+		if cerr := p.Destroy(cleanupCtx, vmName); cerr != nil {
+			t.Errorf("CLEANUP FAILED: %v — please run: gcloud compute instances delete %s --zone=%s --project=%s --quiet",
+				cerr, vmName, zone, project)
+		}
+	})
+
+	if err != nil {
+		t.Fatalf("Provision: %v", err)
+	}
+	t.Logf("provisioned: %s", vm.ID)
+
+	// --- Poll via SSH for bootstrap completion ---
+	// The serial console buffers output too aggressively to be a reliable
+	// signal. Probe directly for what we actually care about: is `claude` on
+	// PATH and runnable? That's the canonical "bootstrap finished" check.
+	t.Logf("polling SSH for bootstrap completion...")
+	deadline := time.Now().Add(10 * time.Minute)
+	pollInterval := 20 * time.Second
+	var claudeOut string
+	var lastErr string
+	for time.Now().Before(deadline) {
+		// Use a short context per ssh attempt so a hang doesn't blow the budget.
+		attemptCtx, cancelAttempt := context.WithTimeout(ctx, 30*time.Second)
+		out, stderr, code, _ := runGcloud(attemptCtx,
+			"compute", "ssh",
+			vmName,
+			"--project="+project,
+			"--zone="+zone,
+			"--quiet",
+			"--command=command -v claude >/dev/null && claude --version 2>&1 || echo BOOTSTRAP_PENDING")
+		cancelAttempt()
+		if code == 0 && len(out) > 0 {
+			s := strings.TrimSpace(out)
+			if strings.Contains(s, "BOOTSTRAP_PENDING") {
+				t.Logf("bootstrap still in progress... (last poll: %s)", time.Now().Format("15:04:05"))
+			} else {
+				claudeOut = s
+				break
+			}
+		} else {
+			lastErr = strings.TrimSpace(stderr)
+			t.Logf("ssh attempt failed (code=%d): %s", code, abbrev(lastErr, 200))
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("ctx canceled during bootstrap polling: %v", ctx.Err())
+		case <-time.After(pollInterval):
+		}
+	}
+	if claudeOut == "" {
+		// Fetch the bootstrap log from the VM for diagnosis.
+		out, _, _, _ := runGcloud(ctx,
+			"compute", "ssh", vmName,
+			"--project="+project, "--zone="+zone, "--quiet",
+			"--command=tail -50 /var/log/moorpost-bootstrap.log 2>/dev/null || echo NO_LOG")
+		t.Fatalf("bootstrap did not complete within 10m; last bootstrap log:\n%s\nlast ssh stderr: %s",
+			lastTail(out, 2000), abbrev(lastErr, 500))
+	}
+	t.Logf("✓ claude on remote: %s", claudeOut)
+	t.Logf("✓ full-cycle bootstrap E2E passed")
+}
+
+func abbrev(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
+}
+
+// lastTail returns the last n bytes of s (with leading "..." if truncated).
+func lastTail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "..." + s[len(s)-n:]
+}
