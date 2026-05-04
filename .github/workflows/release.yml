@@ -1,0 +1,48 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: cross-compile + GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history for `git describe --tags`.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+          cache-dependency-path: cli/go.sum
+
+      - name: Test
+        working-directory: cli
+        run: go test -race ./...
+
+      - name: Cross-compile
+        run: make release
+
+      - name: Compute checksums (already done by `make release`)
+        run: cat dist/SHA256SUMS
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/moorpost-darwin-amd64
+            dist/moorpost-darwin-arm64
+            dist/moorpost-linux-amd64
+            dist/moorpost-linux-arm64
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

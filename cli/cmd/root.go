@@ -6,11 +6,9 @@ import (
 	"time"
 
 	"github.com/latent-advisory/moorpost/cli/internal/audit"
+	"github.com/latent-advisory/moorpost/cli/internal/version"
 	"github.com/spf13/cobra"
 )
-
-// Version is the CLI version. Overridden at build time via -ldflags.
-var Version = "0.0.0-dev"
 
 // auditStart records the start time for the duration calculation in
 // PersistentPostRunE. Set in PersistentPreRunE.
@@ -35,7 +33,7 @@ var rootCmd = &cobra.Command{
 	Use:           "moorpost",
 	Short:         "Tether your laptop to a remote forward base where Claude Code keeps working.",
 	Long:          "Moorpost lets you work locally by default and hand off to a remote VM when stepping away.\nSee https://github.com/latent-advisory/moorpost for documentation.",
-	Version:       Version,
+	Version:       version.Info(),
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

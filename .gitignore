@@ -14,6 +14,8 @@ cli/dist/
 cli/coverage.out
 cli/moorpost
 cli/moorpost.exe
+dist/
+coverage.out
 
 # Go
 *.exe
