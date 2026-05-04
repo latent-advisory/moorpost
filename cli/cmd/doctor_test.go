@@ -5,6 +5,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/latent-advisory/moorpost/cli/internal/config"
 )
 
 func TestRunDoctorAllOK(t *testing.T) {
@@ -78,5 +80,54 @@ func TestCheckBinaryAvailablePresent(t *testing.T) {
 	res := check(context.Background())
 	if res.Severity != "ok" {
 		t.Errorf("severity = %q, want ok", res.Severity)
+	}
+}
+
+// --- iter 40: persistent auto-stop check ---
+
+func TestCheckPersistentAutoStop_Enabled(t *testing.T) {
+	cfg := config.Default()
+	cfg.Mode = config.ModePersistent
+	cfg.Persistent.AutoStopMinutes = 60
+	res := checkPersistentAutoStop(cfg)(context.Background())
+	if res.Severity != "ok" {
+		t.Errorf("severity = %q, want ok", res.Severity)
+	}
+	if !strings.Contains(res.Detail, "60min") {
+		t.Errorf("detail missing minute count: %q", res.Detail)
+	}
+}
+
+func TestCheckPersistentAutoStop_Disabled_Warns(t *testing.T) {
+	cfg := config.Default()
+	cfg.Mode = config.ModePersistent
+	cfg.Persistent.AutoStopMinutes = 0
+	res := checkPersistentAutoStop(cfg)(context.Background())
+	if res.Severity != "warn" {
+		t.Errorf("severity = %q, want warn", res.Severity)
+	}
+	for _, want := range []string{"disabled", "auto_stop_minutes"} {
+		if !strings.Contains(res.Detail+" "+res.Hint, want) {
+			t.Errorf("output missing %q\ndetail: %q\nhint:   %q", want, res.Detail, res.Hint)
+		}
+	}
+	// Hint should suggest a sensible default + the config-file path.
+	if !strings.Contains(res.Hint, ".moorpost/config.yaml") {
+		t.Errorf("hint missing config-file path: %q", res.Hint)
+	}
+	if !strings.Contains(res.Hint, "60") {
+		t.Errorf("hint missing the suggested default '60': %q", res.Hint)
+	}
+}
+
+func TestCheckPersistentAutoStop_NegativeTreatedAsDisabled(t *testing.T) {
+	// Validate() rejects negatives at load time, but the doctor check
+	// shouldn't crash if it ever sees one — fall through the <=0 guard.
+	cfg := config.Default()
+	cfg.Mode = config.ModePersistent
+	cfg.Persistent.AutoStopMinutes = -5
+	res := checkPersistentAutoStop(cfg)(context.Background())
+	if res.Severity != "warn" {
+		t.Errorf("severity = %q, want warn for negative value", res.Severity)
 	}
 }

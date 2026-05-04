@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"regexp"
 
+	"github.com/latent-advisory/moorpost/cli/internal/config"
 	"github.com/latent-advisory/moorpost/cli/internal/keychain"
 	_ "github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/spf13/cobra"
@@ -34,6 +35,11 @@ the Compute Engine API on the configured GCP project).`,
 			Stderr: cmd.ErrOrStderr(),
 		}); err == nil && c.Provider != nil {
 			checks = append(checks, checkProviderPreflight(c.Provider, c.Config.Provider.Type))
+			// Only relevant in persistent mode — local-first VMs are stopped
+			// between handoffs by default, so auto-stop doesn't apply.
+			if c.Config != nil && c.Config.Mode == config.ModePersistent {
+				checks = append(checks, checkPersistentAutoStop(c.Config))
+			}
 			if doctorFlagFix {
 				// Run the doctor checks first; then if the gcp-preflight
 				// reported API-disabled, run the fix and re-run the check.
@@ -195,6 +201,31 @@ func checkProviderPreflight(p interface {
 			Severity: "fail",
 			Detail:   "not ready",
 			Hint:     err.Error(),
+		}
+	}
+}
+
+// checkPersistentAutoStop warns when mode=persistent but auto_stop_minutes=0
+// — that combination disables iter 33's post-flight cost guardrail and
+// leaves the VM running until manually stopped.
+//
+// Caller is responsible for only adding this check when mode is persistent;
+// in any other mode it shouldn't appear in `moorpost doctor` output.
+func checkPersistentAutoStop(cfg *config.ProjectConfig) Check {
+	return func(_ context.Context) CheckResult {
+		mins := cfg.Persistent.AutoStopMinutes
+		if mins <= 0 {
+			return CheckResult{
+				Name:     "persistent auto-stop",
+				Severity: "warn",
+				Detail:   "disabled (auto_stop_minutes=0)",
+				Hint:     "mode is persistent so the VM will keep running 24/7 until you stop it manually; set persistent.auto_stop_minutes to 60 in .moorpost/config.yaml to re-enable the cost guardrail",
+			}
+		}
+		return CheckResult{
+			Name:     "persistent auto-stop",
+			Severity: "ok",
+			Detail:   fmt.Sprintf("%dmin", mins),
 		}
 	}
 }
