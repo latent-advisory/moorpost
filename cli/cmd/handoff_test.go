@@ -383,7 +383,7 @@ func TestRunCostHappyPath(t *testing.T) {
 	fp := &fakeProvider{}
 	c, _ := makeLifecycleContext(t, fp, true)
 	var out bytes.Buffer
-	if err := RunCost(context.Background(), &out, c, "mtd"); err != nil {
+	if err := RunCost(context.Background(), &out, c, "mtd", false); err != nil {
 		t.Fatalf("RunCost: %v", err)
 	}
 	for _, want := range []string{"Compute:", "Disk:", "Total:"} {
@@ -397,7 +397,7 @@ func TestRunCostUnknownPeriod(t *testing.T) {
 	fp := &fakeProvider{}
 	c, _ := makeLifecycleContext(t, fp, true)
 	var out bytes.Buffer
-	if err := RunCost(context.Background(), &out, c, "yearly"); err == nil {
+	if err := RunCost(context.Background(), &out, c, "yearly", false); err == nil {
 		t.Error("RunCost accepted unknown period")
 	}
 }
