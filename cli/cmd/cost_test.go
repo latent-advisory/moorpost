@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
 	"math"
 	"testing"
 	"time"
 
 	"github.com/latent-advisory/moorpost/cli/internal/audit"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
+	"github.com/latent-advisory/moorpost/cli/internal/state"
 )
 
 // TestRescaleEstimate_NoOpWhenNotEstimate ensures we don't touch cb when the
@@ -190,3 +193,145 @@ var errAudit = stringErr("audit read failed (test sentinel)")
 type stringErr string
 
 func (e stringErr) Error() string { return string(e) }
+
+// makeCostContextWithProvider builds a Context wired to a Cost-returning
+// provider, mirroring makeCapContext but with caller-controlled cost return.
+func makeCostContextWithProvider(t *testing.T, costReturn provider.CostBreakdown) *Context {
+	t.Helper()
+	c, _ := makeLifecycleContext(t, &fakeProvider{}, true)
+	c.Provider = &capFakeProvider{
+		fakeProvider: &fakeProvider{},
+		costReturn:   costReturn,
+	}
+	c.Stderr = &bytes.Buffer{}
+	return c
+}
+
+// readVMRecord re-opens state from disk and returns the VM record (or
+// fails the test if not present).
+func readVMRecord(t *testing.T, c *Context, vmID string) state.VMRecord {
+	t.Helper()
+	st, err := state.Open(c.StatePath)
+	if err != nil {
+		t.Fatalf("state.Open: %v", err)
+	}
+	rec, ok := st.VMs[vmID]
+	if !ok {
+		t.Fatalf("VM %q not in state", vmID)
+	}
+	return rec
+}
+
+// TestRunCost_RefreshesMonthToDateCache_ForMTD verifies that running
+// `moorpost cost --period mtd` writes the (possibly rescaled) Total back
+// to state.VMs[vmID].MonthToDateUSD so the status bar / tree view see
+// the same number.
+func TestRunCost_RefreshesMonthToDateCache_ForMTD(t *testing.T) {
+	withInjectedAudit(t, []audit.Entry{}) // no running hours → rescaled to 0
+
+	c := makeCostContextWithProvider(t, provider.CostBreakdown{
+		Compute:    49.85, // calendar-hour buggy estimate from provider
+		Total:      49.85,
+		IsEstimate: true,
+	})
+
+	// Pre-state: cache holds a stale value.
+	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 49.85}
+	if err := c.State.Save(c.StatePath); err != nil {
+		t.Fatalf("save initial: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "mtd", false); err != nil {
+		t.Fatalf("RunCost: %v", err)
+	}
+
+	rec := readVMRecord(t, c, "argus-vm")
+	// Empty audit → rescaled compute = 0; Total = 0.
+	if rec.MonthToDateUSD != 0 {
+		t.Errorf("MonthToDateUSD = %v, want 0 (rescaled)", rec.MonthToDateUSD)
+	}
+}
+
+// TestRunCost_DoesNotRefreshCache_ForToday: the cache field is named
+// MonthToDateUSD; writing today/week totals would clobber it.
+func TestRunCost_DoesNotRefreshCache_ForToday(t *testing.T) {
+	withInjectedAudit(t, []audit.Entry{})
+
+	c := makeCostContextWithProvider(t, provider.CostBreakdown{
+		Compute:    1.61, // 24h × $0.067
+		Total:      1.61,
+		IsEstimate: true,
+	})
+
+	const preserved = 12.34
+	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
+	if err := c.State.Save(c.StatePath); err != nil {
+		t.Fatalf("save initial: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "today", false); err != nil {
+		t.Fatalf("RunCost: %v", err)
+	}
+
+	rec := readVMRecord(t, c, "argus-vm")
+	if rec.MonthToDateUSD != preserved {
+		t.Errorf("MonthToDateUSD = %v, want %v (today should not touch cache)", rec.MonthToDateUSD, preserved)
+	}
+}
+
+// TestRunCost_DoesNotRefreshCache_ForWeek: same gating as today.
+func TestRunCost_DoesNotRefreshCache_ForWeek(t *testing.T) {
+	withInjectedAudit(t, []audit.Entry{})
+
+	c := makeCostContextWithProvider(t, provider.CostBreakdown{
+		Compute:    11.27, // 168h × $0.067
+		Total:      11.27,
+		IsEstimate: true,
+	})
+
+	const preserved = 7.77
+	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
+	if err := c.State.Save(c.StatePath); err != nil {
+		t.Fatalf("save initial: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "week", false); err != nil {
+		t.Fatalf("RunCost: %v", err)
+	}
+
+	rec := readVMRecord(t, c, "argus-vm")
+	if rec.MonthToDateUSD != preserved {
+		t.Errorf("MonthToDateUSD = %v, want %v (week should not touch cache)", rec.MonthToDateUSD, preserved)
+	}
+}
+
+// TestRunCost_RefreshesMonthToDateCache_NonEstimate covers the v1.1 path:
+// when the provider returns billed (non-estimate) data, the rescaler
+// no-ops and we cache the provider's value verbatim.
+func TestRunCost_RefreshesMonthToDateCache_NonEstimate(t *testing.T) {
+	withInjectedAudit(t, []audit.Entry{}) // not consulted when IsEstimate=false
+
+	c := makeCostContextWithProvider(t, provider.CostBreakdown{
+		Compute:    2.50,
+		Total:      2.50,
+		IsEstimate: false,
+	})
+
+	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 0}
+	if err := c.State.Save(c.StatePath); err != nil {
+		t.Fatalf("save initial: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "mtd", false); err != nil {
+		t.Fatalf("RunCost: %v", err)
+	}
+
+	rec := readVMRecord(t, c, "argus-vm")
+	if !floatNear(rec.MonthToDateUSD, 2.50, 1e-6) {
+		t.Errorf("MonthToDateUSD = %v, want 2.50 (non-estimate verbatim)", rec.MonthToDateUSD)
+	}
+}

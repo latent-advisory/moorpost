@@ -10,6 +10,7 @@ import (
 	"github.com/latent-advisory/moorpost/cli/internal/audit"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/latent-advisory/moorpost/cli/internal/runtime"
+	"github.com/latent-advisory/moorpost/cli/internal/state"
 	"github.com/spf13/cobra"
 )
 
@@ -104,6 +105,20 @@ func RunCost(ctx context.Context, out io.Writer, c *Context, period string, expl
 
 	if explain {
 		printExplain(out, periodHours, scaledHours, scaled, cb)
+	}
+
+	// Best-effort: keep the MTD cache in state.VMs in sync with what the
+	// rescaled cost just printed, so `moorpost status`, the VSCode status
+	// bar, and the tree view all show the same number. Only for the `mtd`
+	// period — the field is named MonthToDateUSD, and writing today/week
+	// totals would clobber it.
+	if period == "" || period == "mtd" {
+		if err := withVM(c, ps.VMID, func(rec *state.VMRecord) error {
+			rec.MonthToDateUSD = cb.Total
+			return nil
+		}); err != nil {
+			fmt.Fprintf(c.Stderr, "cost: cache refresh failed (display will be stale until next run): %v\n", err)
+		}
 	}
 	return nil
 }
