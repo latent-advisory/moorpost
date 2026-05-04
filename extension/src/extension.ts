@@ -6,9 +6,16 @@
 import * as vscode from 'vscode';
 import { registerCommands } from './commands';
 import { setupStatusBar } from './statusBar';
+import { MoorpostTreeProvider } from './treeView';
 
 export function activate(context: vscode.ExtensionContext): void {
-  registerCommands(context);
+  const treeProvider = new MoorpostTreeProvider();
+  context.subscriptions.push(
+    vscode.window.registerTreeDataProvider('moorpost.projectTree', treeProvider),
+    vscode.commands.registerCommand('moorpost.refreshTree', () => treeProvider.refresh()),
+  );
+
+  registerCommands(context, treeProvider);
   setupStatusBar(context);
 
   // Smoke-log so the user can confirm the extension activated. Visible in

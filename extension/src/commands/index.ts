@@ -3,8 +3,20 @@
 
 import * as vscode from 'vscode';
 import { runInTerminal, getStatus, workspaceRoot } from '../cli';
+import type { MoorpostTreeProvider } from '../treeView';
 
-export function registerCommands(context: vscode.ExtensionContext): void {
+export function registerCommands(
+  context: vscode.ExtensionContext,
+  treeProvider?: MoorpostTreeProvider,
+): void {
+  // Tree refreshes after handoff/return because the active side flips. The CLI
+  // commands run in a terminal so we can't await their exit; refresh on a
+  // short delay to give the CLI time to update state.
+  const refreshTreeAfter = (ms: number) => {
+    if (!treeProvider) return;
+    setTimeout(() => treeProvider.refresh(), ms);
+  };
+
   context.subscriptions.push(
     vscode.commands.registerCommand('moorpost.signIn', async () => {
       runInTerminal(['auth']);
@@ -17,6 +29,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         return;
       }
       runInTerminal(['provision'], cwd);
+      refreshTreeAfter(5000);
     }),
 
     vscode.commands.registerCommand('moorpost.handoff', async () => {
@@ -32,6 +45,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
       );
       if (choice !== 'Hand off') return;
       runInTerminal(['handoff', '--yes'], cwd);
+      refreshTreeAfter(8000);
     }),
 
     vscode.commands.registerCommand('moorpost.return', async () => {
@@ -41,6 +55,7 @@ export function registerCommands(context: vscode.ExtensionContext): void {
         return;
       }
       runInTerminal(['return'], cwd);
+      refreshTreeAfter(8000);
     }),
 
     vscode.commands.registerCommand('moorpost.status', async () => {

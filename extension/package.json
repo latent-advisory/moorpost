@@ -27,11 +27,6 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "onCommand:moorpost.signIn",
-    "onCommand:moorpost.provision",
-    "onCommand:moorpost.handoff",
-    "onCommand:moorpost.return",
-    "onCommand:moorpost.status",
     "workspaceContains:.moorpost/config.yaml"
   ],
   "contributes": {
@@ -60,8 +55,41 @@
         "command": "moorpost.status",
         "title": "Moorpost: Show status",
         "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.refreshTree",
+        "title": "Refresh",
+        "category": "Moorpost",
+        "icon": "$(refresh)"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "moorpost",
+          "title": "Moorpost",
+          "icon": "$(cloud)"
+        }
+      ]
+    },
+    "views": {
+      "moorpost": [
+        {
+          "id": "moorpost.projectTree",
+          "name": "Project",
+          "contextualTitle": "Moorpost"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "moorpost.refreshTree",
+          "when": "view == moorpost.projectTree",
+          "group": "navigation"
+        }
+      ]
+    },
     "configuration": {
       "title": "Moorpost",
       "properties": {
