@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/latent-advisory/moorpost/cli/internal/bootstrap"
+	"github.com/latent-advisory/moorpost/cli/internal/config"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	"github.com/spf13/cobra"
@@ -103,10 +104,15 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 	if remoteUser == "" {
 		remoteUser = "moorpost"
 	}
+	idleAutoStopMin := 0
+	if c.Config.Mode == config.ModePersistent {
+		idleAutoStopMin = c.Config.Persistent.AutoStopMinutes
+	}
 	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
-		ProjectSlug:  c.Config.ProjectSlug,
-		LocalAbsPath: c.ProjectDir,
-		RemoteUser:   remoteUser,
+		ProjectSlug:         c.Config.ProjectSlug,
+		LocalAbsPath:        c.ProjectDir,
+		RemoteUser:          remoteUser,
+		IdleAutoStopMinutes: idleAutoStopMin,
 	})
 	if err != nil {
 		return fmt.Errorf("provision: render bootstrap: %w", err)

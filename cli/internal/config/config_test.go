@@ -164,6 +164,36 @@ func TestValidateRejectsBadMode(t *testing.T) {
 	}
 }
 
+func TestPersistentAutoStopMinutes_DefaultIs60(t *testing.T) {
+	c := Default()
+	if c.Persistent.AutoStopMinutes != 60 {
+		t.Errorf("default persistent.auto_stop_minutes = %d, want 60", c.Persistent.AutoStopMinutes)
+	}
+}
+
+func TestValidateRejectsNegativeAutoStopMinutes(t *testing.T) {
+	c := Default()
+	c.ProjectSlug = "argus"
+	c.Persistent.AutoStopMinutes = -1
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted negative persistent.auto_stop_minutes")
+	}
+	if !strings.Contains(err.Error(), "auto_stop_minutes") {
+		t.Errorf("error %q does not mention the field name", err.Error())
+	}
+}
+
+func TestValidateAcceptsZeroAutoStopMinutes(t *testing.T) {
+	// 0 is the documented "disable" value.
+	c := Default()
+	c.ProjectSlug = "argus"
+	c.Persistent.AutoStopMinutes = 0
+	if err := c.Validate(); err != nil {
+		t.Errorf("Validate rejected auto_stop_minutes=0 (should be allowed as disable): %v", err)
+	}
+}
+
 func TestValidateRejectsBadConflictPolicy(t *testing.T) {
 	c := Default()
 	c.ProjectSlug = "argus"

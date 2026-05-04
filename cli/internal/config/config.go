@@ -28,9 +28,20 @@ type ProjectConfig struct {
 	Agent    Agent    `yaml:"agent"`
 	Sync     Sync     `yaml:"sync"`
 
-	Mode    Mode    `yaml:"mode"`
-	Handoff Handoff `yaml:"handoff"`
-	Cost    Cost    `yaml:"cost"`
+	Mode       Mode       `yaml:"mode"`
+	Handoff    Handoff    `yaml:"handoff"`
+	Cost       Cost       `yaml:"cost"`
+	Persistent Persistent `yaml:"persistent"`
+}
+
+// Persistent configures behavior specific to `mode: persistent`. Settings
+// here are ignored when mode is local-first.
+type Persistent struct {
+	// AutoStopMinutes is the idle threshold for the VM-side auto-stop
+	// monitor. 0 disables auto-stop entirely. Default: 60. Per PLUGIN.md
+	// §10 #6, idle = no SSH session AND no tmux input AND no recent
+	// mutagen sync activity.
+	AutoStopMinutes int `yaml:"auto_stop_minutes"`
 }
 
 // Provider holds the cloud-provider selection plus a free-form subsection.
@@ -121,6 +132,9 @@ func Default() *ProjectConfig {
 		Cost: Cost{
 			MonthlyCapUSD:   50,
 			AlertThresholds: []float64{10, 25},
+		},
+		Persistent: Persistent{
+			AutoStopMinutes: 60,
 		},
 	}
 }
@@ -245,6 +259,9 @@ func (c *ProjectConfig) Validate() error {
 	}
 	if c.Cost.MonthlyCapUSD < 0 {
 		errs = append(errs, "cost.monthly_cap_usd must be non-negative")
+	}
+	if c.Persistent.AutoStopMinutes < 0 {
+		errs = append(errs, "persistent.auto_stop_minutes must be non-negative")
 	}
 	for i, threshold := range c.Cost.AlertThresholds {
 		if threshold < 0 {

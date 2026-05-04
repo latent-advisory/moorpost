@@ -37,6 +37,16 @@ type BootstrapVars struct {
 	// ClaudeCodeVersion optionally pins @anthropic-ai/claude-code to a
 	// specific version (e.g. "2.0.0"). Empty = latest.
 	ClaudeCodeVersion string
+
+	// IdleAutoStopMinutes installs the VM-side idle monitor when > 0.
+	// Should only be set when the project's mode is `persistent`. The
+	// installed systemd timer polls every 5 minutes and stops the VM
+	// after this many consecutive idle minutes.
+	IdleAutoStopMinutes int
+
+	// IdleMonitorInstall is the rendered shell snippet that the template
+	// includes inline. Computed by Render from IdleAutoStopMinutes.
+	IdleMonitorInstall string
 }
 
 // applyDefaults fills in zero-valued fields with v0.1 defaults.
@@ -66,6 +76,9 @@ func Render(v BootstrapVars) (string, error) {
 		return "", err
 	}
 	v.applyDefaults()
+	if v.IdleAutoStopMinutes > 0 {
+		v.IdleMonitorInstall = renderIdleInstall(BuildIdleMonitorUnits(v.IdleAutoStopMinutes))
+	}
 	tmpl, err := template.New("bootstrap").Parse(rawTemplate)
 	if err != nil {
 		return "", fmt.Errorf("bootstrap: parse template: %w", err)
