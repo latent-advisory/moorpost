@@ -1,10 +1,12 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 
+	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 	"github.com/spf13/cobra"
 )
 
@@ -42,6 +44,12 @@ type statusReport struct {
 	VMID       string  `json:"vm_id,omitempty"`
 	VMState    string  `json:"vm_state,omitempty"`
 	MTDCostUSD float64 `json:"month_to_date_usd,omitempty"`
+	// Conflicts is the unresolved-conflict count from the active sync
+	// session, if any. -1 means "session known but conflict count is
+	// unavailable" (e.g., mutagen daemon down). Omitted when no session.
+	Conflicts        int    `json:"conflicts,omitempty"`
+	HasSyncSession   bool   `json:"has_sync_session,omitempty"`
+	SyncSessionID    string `json:"sync_session_id,omitempty"`
 }
 
 // RunStatus prints the project status. If asJSON is true, emits the report
@@ -66,6 +74,17 @@ func RunStatus(out io.Writer, c *Context, asJSON bool) error {
 				if vm, ok := c.State.VMs[ps.VMID]; ok {
 					report.VMState = vm.StateCache
 					report.MTDCostUSD = vm.MonthToDateUSD
+				}
+				if ps.SyncSessionID != "" && c.Sync != nil {
+					report.HasSyncSession = true
+					report.SyncSessionID = ps.SyncSessionID
+					// Best-effort: a Sync.Status failure here shouldn't
+					// fail the user's `moorpost status` call. Conflicts
+					// stays 0 (pessimistically optimistic — clean).
+					ss, err := c.Sync.Status(context.Background(), mpsync.SyncSessionID(ps.SyncSessionID))
+					if err == nil {
+						report.Conflicts = ss.Conflicts
+					}
 				}
 				break
 			}
@@ -92,6 +111,13 @@ func RunStatus(out io.Writer, c *Context, asJSON bool) error {
 	}
 	if report.MTDCostUSD > 0 {
 		fmt.Fprintf(out, "Month-to-date: $%.2f (estimate)\n", report.MTDCostUSD)
+	}
+	if report.HasSyncSession {
+		if report.Conflicts == 0 {
+			fmt.Fprintln(out, "Conflicts:     0 (clean)")
+		} else {
+			fmt.Fprintf(out, "Conflicts:     %d (run `moorpost conflicts` for details)\n", report.Conflicts)
+		}
 	}
 	return nil
 }

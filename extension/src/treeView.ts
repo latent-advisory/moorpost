@@ -20,10 +20,12 @@ export class MoorpostTreeItem extends vscode.TreeItem {
     public readonly label: string,
     public readonly value: string,
     public readonly icon?: vscode.ThemeIcon,
+    command?: vscode.Command,
   ) {
     super(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
     this.tooltip = `${label}: ${value}`;
     if (icon) this.iconPath = icon;
+    if (command) this.command = command;
   }
 }
 
@@ -91,6 +93,19 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
         'Cost (MTD)',
         `$${s.month_to_date_usd.toFixed(2)} (estimate)`,
         new vscode.ThemeIcon('credit-card'),
+      ),
+    );
+  }
+  if (s.has_sync_session) {
+    const count = typeof s.conflicts === 'number' ? s.conflicts : 0;
+    const value = count === 0 ? '0 (clean)' : `${count} (click to view)`;
+    const icon = count === 0 ? 'check' : 'warning';
+    items.push(
+      new MoorpostTreeItem(
+        'Conflicts',
+        value,
+        new vscode.ThemeIcon(icon),
+        { command: 'moorpost.showConflicts', title: 'Show conflicts' },
       ),
     );
   }

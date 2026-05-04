@@ -76,5 +76,14 @@ export function registerCommands(
       if (status.month_to_date_usd) lines.push(`MTD cost: $${status.month_to_date_usd.toFixed(2)}`);
       void vscode.window.showInformationMessage(lines.join(' · '));
     }),
+
+    vscode.commands.registerCommand('moorpost.showConflicts', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      runInTerminal(['conflicts'], cwd);
+    }),
   );
 }

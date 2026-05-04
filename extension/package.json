@@ -61,6 +61,11 @@
         "title": "Refresh",
         "category": "Moorpost",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "moorpost.showConflicts",
+        "title": "Moorpost: Show sync conflicts",
+        "category": "Moorpost"
       }
     ],
     "viewsContainers": {

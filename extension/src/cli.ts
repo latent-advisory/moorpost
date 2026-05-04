@@ -29,6 +29,10 @@ export interface StatusReport {
   vm_id?: string;
   vm_state?: string;
   month_to_date_usd?: number;
+  // Conflict surface — populated only when a sync session is active.
+  has_sync_session?: boolean;
+  sync_session_id?: string;
+  conflicts?: number;
 }
 
 /**
