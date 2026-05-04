@@ -1,0 +1,323 @@
+package cmd
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/latent-advisory/moorpost/cli/internal/agent"
+	"github.com/latent-advisory/moorpost/cli/internal/provider"
+	"github.com/latent-advisory/moorpost/cli/internal/state"
+	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
+)
+
+// fakeAgent is the cmd-test fakeAgent (separate from the one in
+// claudecode_test.go).
+type cmdFakeAgent struct {
+	authResult       agent.Credential
+	authErr          error
+	injectCalls      []agent.Credential
+	resumeCalls      int
+	pauseCalls       int
+	isActiveResult   bool
+	isActiveErr      error
+	sessionStateRoot string
+}
+
+func (f *cmdFakeAgent) ID() string                         { return "fake-agent" }
+func (f *cmdFakeAgent) InstallScript(agent.OSFamily) string { return "" }
+func (f *cmdFakeAgent) AuthenticateLocal(context.Context) (agent.Credential, error) {
+	return f.authResult, f.authErr
+}
+func (f *cmdFakeAgent) InjectCredential(_ context.Context, _ agent.SSHTarget, c agent.Credential) error {
+	f.injectCalls = append(f.injectCalls, c)
+	return nil
+}
+func (f *cmdFakeAgent) SessionStatePath(projectAbsDir string) string {
+	if f.sessionStateRoot == "" {
+		return ""
+	}
+	return f.sessionStateRoot + "/" + projectAbsDir
+}
+func (f *cmdFakeAgent) Pause(context.Context, agent.SSHTarget, agent.SessionRef) error {
+	f.pauseCalls++
+	return nil
+}
+func (f *cmdFakeAgent) Resume(context.Context, agent.SSHTarget, agent.SessionRef) error {
+	f.resumeCalls++
+	return nil
+}
+func (f *cmdFakeAgent) IsActive(context.Context, agent.SSHTarget, agent.SessionRef) (bool, error) {
+	return f.isActiveResult, f.isActiveErr
+}
+
+// cmdFakeSync records OneShot calls.
+type cmdFakeSync struct {
+	oneShotCalls []oneShotRecord
+	oneShotErr   error
+}
+
+type oneShotRecord struct {
+	src, dst mpsync.Endpoint
+	dir      mpsync.Direction
+}
+
+func (f *cmdFakeSync) ID() string { return "fake-sync" }
+func (f *cmdFakeSync) StartSession(context.Context, mpsync.SyncSpec) (mpsync.SyncSessionID, error) {
+	return "", nil
+}
+func (f *cmdFakeSync) Pause(context.Context, mpsync.SyncSessionID) error  { return nil }
+func (f *cmdFakeSync) Resume(context.Context, mpsync.SyncSessionID) error { return nil }
+func (f *cmdFakeSync) OneShot(_ context.Context, src, dst mpsync.Endpoint, dir mpsync.Direction) error {
+	f.oneShotCalls = append(f.oneShotCalls, oneShotRecord{src: src, dst: dst, dir: dir})
+	return f.oneShotErr
+}
+func (f *cmdFakeSync) Status(context.Context, mpsync.SyncSessionID) (mpsync.SyncStatus, error) {
+	return mpsync.SyncStatus{}, nil
+}
+func (f *cmdFakeSync) Stop(context.Context, mpsync.SyncSessionID) error { return nil }
+
+func makeHandoffContext(t *testing.T, fp *fakeProvider, fa *cmdFakeAgent, fs *cmdFakeSync, activeSide state.Side) *Context {
+	t.Helper()
+	c, _ := makeLifecycleContext(t, fp, true)
+	if activeSide != "" {
+		_ = state.WithLock(c.StatePath, func(s *state.State) error {
+			ps := s.Projects[c.ProjectDir]
+			ps.ActiveSide = activeSide
+			s.SetProject(c.ProjectDir, ps)
+			c.State = s
+			return nil
+		})
+	}
+	c.Agent = fa
+	c.Sync = fs
+	return c
+}
+
+func TestRunHandoffHappyPath(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "35.1.2.3", Port: 22, User: "u"}}
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{EnvVar: "TOKEN", Value: "x", Kind: "k"},
+		sessionStateRoot: t.TempDir(),
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+	var out bytes.Buffer
+	fixedNow := time.Date(2026, 5, 4, 21, 0, 0, 0, time.UTC)
+	err := RunHandoff(context.Background(), &out, strings.NewReader("y\n"), c, HandoffOptions{
+		Now: func() time.Time { return fixedNow },
+	})
+	if err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	if len(fp.startCalls) != 1 {
+		t.Errorf("Provider.Start calls = %d, want 1", len(fp.startCalls))
+	}
+	if len(fa.injectCalls) != 1 {
+		t.Errorf("Agent.InjectCredential calls = %d, want 1", len(fa.injectCalls))
+	}
+	if fa.resumeCalls != 1 {
+		t.Errorf("Agent.Resume calls = %d, want 1", fa.resumeCalls)
+	}
+	if len(fs.oneShotCalls) < 1 || len(fs.oneShotCalls) > 2 {
+		t.Errorf("Sync.OneShot calls = %d, want 1 or 2", len(fs.oneShotCalls))
+	}
+	for _, call := range fs.oneShotCalls {
+		if call.dir != mpsync.DirectionLocalToRemote {
+			t.Errorf("OneShot dir = %q, want local-to-remote", call.dir)
+		}
+	}
+	// State updated.
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.ActiveSide != state.SideRemote {
+		t.Errorf("ActiveSide = %q, want remote", ps.ActiveSide)
+	}
+	if !ps.LastHandoff.Equal(fixedNow) {
+		t.Errorf("LastHandoff = %v, want %v", ps.LastHandoff, fixedNow)
+	}
+}
+
+func TestRunHandoffRejectsAlreadyRemote(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	if err == nil || !strings.Contains(err.Error(), "already remote") {
+		t.Errorf("err = %v, want 'already remote'", err)
+	}
+	if len(fp.startCalls) != 0 {
+		t.Error("Start should not be called when already remote")
+	}
+}
+
+func TestRunHandoffPromptAbort(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader("n\n"), c, HandoffOptions{})
+	if err == nil || !strings.Contains(err.Error(), "aborted") {
+		t.Errorf("err = %v, want aborted", err)
+	}
+}
+
+func TestRunHandoffStartFailure(t *testing.T) {
+	myErr := errors.New("permission denied")
+	fp := &fakeProvider{startErr: myErr, sshTarget: provider.SSHTarget{Host: "h"}}
+	c := makeHandoffContext(t, fp, &cmdFakeAgent{}, &cmdFakeSync{}, state.SideLocal)
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	if !errors.Is(err, myErr) {
+		t.Errorf("err = %v, want wrap %v", err, myErr)
+	}
+}
+
+func TestRunHandoffNoProject(t *testing.T) {
+	fp := &fakeProvider{}
+	c, _ := makeLifecycleContext(t, fp, false)
+	c.Agent = &cmdFakeAgent{}
+	c.Sync = &cmdFakeSync{}
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err == nil {
+		t.Error("RunHandoff accepted unprovisioned project")
+	}
+}
+
+// --- Return ---
+
+func TestRunReturnHappyPath(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "35.1.2.3", User: "u"}}
+	fa := &cmdFakeAgent{sessionStateRoot: t.TempDir()}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
+	var out bytes.Buffer
+	fixedNow := time.Date(2026, 5, 4, 22, 0, 0, 0, time.UTC)
+	err := RunReturn(context.Background(), &out, c, ReturnOptions{Stop: true, Now: func() time.Time { return fixedNow }})
+	if err != nil {
+		t.Fatalf("RunReturn: %v", err)
+	}
+	if len(fp.stopCalls) != 1 {
+		t.Errorf("Provider.Stop calls = %d, want 1 (Stop=true)", len(fp.stopCalls))
+	}
+	for _, call := range fs.oneShotCalls {
+		if call.dir != mpsync.DirectionRemoteToLocal {
+			t.Errorf("OneShot dir = %q, want remote-to-local", call.dir)
+		}
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.ActiveSide != state.SideLocal {
+		t.Errorf("ActiveSide = %q, want local", ps.ActiveSide)
+	}
+	if !ps.LastReturn.Equal(fixedNow) {
+		t.Errorf("LastReturn = %v, want %v", ps.LastReturn, fixedNow)
+	}
+}
+
+func TestRunReturnNoStopFlag(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
+	var out bytes.Buffer
+	if err := RunReturn(context.Background(), &out, c, ReturnOptions{Stop: false}); err != nil {
+		t.Fatal(err)
+	}
+	if len(fp.stopCalls) != 0 {
+		t.Errorf("Stop should not be called when --stop=false")
+	}
+}
+
+func TestRunReturnRejectsAlreadyLocal(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h"}}
+	c := makeHandoffContext(t, fp, &cmdFakeAgent{}, &cmdFakeSync{}, state.SideLocal)
+	var out bytes.Buffer
+	if err := RunReturn(context.Background(), &out, c, ReturnOptions{}); err == nil {
+		t.Error("RunReturn accepted active=local")
+	}
+}
+
+// --- Snapshot ---
+
+func TestRunSnapshot(t *testing.T) {
+	fp := &fakeProvider{}
+	c, _ := makeLifecycleContext(t, fp, true)
+	var out bytes.Buffer
+	if err := RunSnapshot(context.Background(), &out, c, "pre-handoff"); err != nil {
+		t.Fatalf("RunSnapshot: %v", err)
+	}
+	// fakeProvider's Snapshot returns "" empty SnapshotID by default; just
+	// verify it didn't error and we printed something.
+	if out.Len() == 0 {
+		t.Error("RunSnapshot produced no output")
+	}
+}
+
+func TestRunSnapshotNoProject(t *testing.T) {
+	fp := &fakeProvider{}
+	c, _ := makeLifecycleContext(t, fp, false)
+	var out bytes.Buffer
+	if err := RunSnapshot(context.Background(), &out, c, "x"); err == nil {
+		t.Error("RunSnapshot accepted unprovisioned project")
+	}
+}
+
+// --- Cost ---
+
+func TestTimeRangeForPeriod(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		period string
+		ok     bool
+	}{
+		{"mtd", true},
+		{"", true},
+		{"today", true},
+		{"week", true},
+		{"yearly", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.period, func(t *testing.T) {
+			tr, err := timeRangeForPeriod(tc.period, now)
+			if tc.ok && err != nil {
+				t.Errorf("err = %v, want nil", err)
+			}
+			if !tc.ok && err == nil {
+				t.Error("expected error for unknown period")
+			}
+			if tc.ok && !tr.End.Equal(now.UTC()) {
+				t.Errorf("End = %v, want %v", tr.End, now.UTC())
+			}
+		})
+	}
+}
+
+func TestRunCostHappyPath(t *testing.T) {
+	fp := &fakeProvider{}
+	c, _ := makeLifecycleContext(t, fp, true)
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "mtd"); err != nil {
+		t.Fatalf("RunCost: %v", err)
+	}
+	for _, want := range []string{"Compute:", "Disk:", "Total:"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
+func TestRunCostUnknownPeriod(t *testing.T) {
+	fp := &fakeProvider{}
+	c, _ := makeLifecycleContext(t, fp, true)
+	var out bytes.Buffer
+	if err := RunCost(context.Background(), &out, c, "yearly"); err == nil {
+		t.Error("RunCost accepted unknown period")
+	}
+}
