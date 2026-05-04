@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -33,6 +34,10 @@ type Entry struct {
 type Logger struct {
 	// Dir is the logs directory (e.g. ~/.moorpost/logs/). Created on demand.
 	Dir string
+
+	// RetentionDays is the maximum age of log files to keep. 0 disables the
+	// sweep. Sweep runs as a side effect of each Append.
+	RetentionDays int
 
 	// Now overrides time.Now for deterministic tests.
 	Now func() time.Time
@@ -73,6 +78,44 @@ func (l *Logger) Append(e Entry) error {
 	line = append(line, '\n')
 	if _, err := f.Write(line); err != nil {
 		return fmt.Errorf("audit: write: %w", err)
+	}
+	// Best-effort retention sweep. Failure here never propagates — logging
+	// shouldn't lose the just-appended entry just because we couldn't prune
+	// old ones.
+	_ = l.sweepOld(l.now())
+	return nil
+}
+
+// dateFilenameRE matches our daily log filename format. Used by the sweep
+// to avoid deleting unrelated files in the dir.
+var dateFilenameRE = regexp.MustCompile(`^(\d{4})-(\d{2})-(\d{2})\.jsonl$`)
+
+// sweepOld removes log files older than RetentionDays. Best-effort: returns
+// nil on any directory-read failure (caller doesn't care).
+func (l *Logger) sweepOld(now time.Time) error {
+	if l.RetentionDays <= 0 {
+		return nil
+	}
+	cutoff := now.UTC().AddDate(0, 0, -l.RetentionDays).Truncate(24 * time.Hour)
+	entries, err := os.ReadDir(l.Dir)
+	if err != nil {
+		return nil // dir might not exist yet; not fatal
+	}
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		m := dateFilenameRE.FindStringSubmatch(ent.Name())
+		if m == nil {
+			continue // not our file
+		}
+		fileDate, err := time.Parse("2006-01-02", m[1]+"-"+m[2]+"-"+m[3])
+		if err != nil {
+			continue
+		}
+		if fileDate.Before(cutoff) {
+			_ = os.Remove(filepath.Join(l.Dir, ent.Name()))
+		}
 	}
 	return nil
 }

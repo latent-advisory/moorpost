@@ -192,3 +192,86 @@ func TestFilePermissions(t *testing.T) {
 		t.Errorf("perm = %o, want 0600", info.Mode().Perm())
 	}
 }
+
+func TestRetentionDeletesOldFiles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	old := filepath.Join(dir, "2026-03-31.jsonl") // 35 days back
+	if err := os.WriteFile(old, []byte(`{"command":"old"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stillFresh := filepath.Join(dir, "2026-04-25.jsonl") // 10 days back
+	if err := os.WriteFile(stillFresh, []byte(`{"command":"recent"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &Logger{
+		Dir:           dir,
+		RetentionDays: 30,
+		Now:           func() time.Time { return now },
+	}
+	if err := l.Append(Entry{Command: "today"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Errorf("35-day-old file should be deleted; got err=%v", err)
+	}
+	if _, err := os.Stat(stillFresh); err != nil {
+		t.Errorf("10-day-old file should be preserved; got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "2026-05-05.jsonl")); err != nil {
+		t.Errorf("today's file should exist; got err=%v", err)
+	}
+}
+
+func TestRetentionDisabledByDefault(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	old := filepath.Join(dir, "2020-01-01.jsonl")
+	if err := os.WriteFile(old, []byte(`{}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &Logger{Dir: dir, Now: func() time.Time { return now }} // RetentionDays = 0
+	if err := l.Append(Entry{Command: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); err != nil {
+		t.Errorf("retention=0 should preserve all files; got err=%v", err)
+	}
+}
+
+func TestRetentionIgnoresNonLogFiles(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"README.md", "random.jsonl", "2026-05.jsonl", "notes"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("safe"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	l := &Logger{Dir: dir, RetentionDays: 1, Now: func() time.Time { return now }}
+	if err := l.Append(Entry{Command: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"README.md", "random.jsonl", "2026-05.jsonl", "notes"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
+			t.Errorf("non-log file %q should be preserved; got err=%v", name, err)
+		}
+	}
+}
+
+func TestRetentionAtBoundary(t *testing.T) {
+	// File at exactly RetentionDays back: cutoff is "before", strict
+	// inequality, so the boundary file should be preserved.
+	dir := t.TempDir()
+	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
+	boundary := filepath.Join(dir, "2026-04-05.jsonl") // 30 days back
+	if err := os.WriteFile(boundary, []byte(`{}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l := &Logger{Dir: dir, RetentionDays: 30, Now: func() time.Time { return now }}
+	if err := l.Append(Entry{Command: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(boundary); err != nil {
+		t.Errorf("file at retention boundary should be preserved; got err=%v", err)
+	}
+}

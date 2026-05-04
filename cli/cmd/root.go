@@ -49,7 +49,9 @@ func auditLoggerForRun() (*audit.Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	return audit.NewLogger(filepath.Join(home, ".moorpost", "logs")), nil
+	logger := audit.NewLogger(filepath.Join(home, ".moorpost", "logs"))
+	logger.RetentionDays = 30 // per PLUGIN.md §10 #13
+	return logger, nil
 }
 
 // logCommandResult is called by Execute after the command finishes. It
