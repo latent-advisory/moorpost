@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -182,12 +183,30 @@ func (e *engine) Provision(ctx context.Context, spec provider.ProvisionSpec) (pr
 	sshKeysMeta := user + ":" + strings.TrimRight(spec.SSHKeyPub, "\n")
 	args = append(args, "--metadata", "ssh-keys="+sshKeysMeta)
 
-	// Bootstrap script via startup-script metadata.
+	// Bootstrap script via startup-script metadata. gcloud's
+	// --metadata-from-file requires a real file path (not "-"); write to a
+	// temp file and clean up after.
+	var tmpScriptPath string
 	if spec.BootstrapScript != "" {
-		args = append(args, "--metadata-from-file", "startup-script=-")
+		f, err := os.CreateTemp("", "moorpost-bootstrap-*.sh")
+		if err != nil {
+			return provider.VM{}, fmt.Errorf("gcp.Provision: write bootstrap temp: %w", err)
+		}
+		tmpScriptPath = f.Name()
+		if _, err := f.WriteString(spec.BootstrapScript); err != nil {
+			f.Close()
+			os.Remove(tmpScriptPath)
+			return provider.VM{}, fmt.Errorf("gcp.Provision: write bootstrap content: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			os.Remove(tmpScriptPath)
+			return provider.VM{}, fmt.Errorf("gcp.Provision: close bootstrap temp: %w", err)
+		}
+		defer os.Remove(tmpScriptPath)
+		args = append(args, "--metadata-from-file", "startup-script="+tmpScriptPath)
 	}
 
-	out, stderr, code, err := e.exec.Run(ctx, e.binary, e.gcloudArgs(args...), []byte(spec.BootstrapScript))
+	out, stderr, code, err := e.exec.Run(ctx, e.binary, e.gcloudArgs(args...), nil)
 	if err != nil {
 		return provider.VM{}, fmt.Errorf("gcloud compute instances create: %w", err)
 	}

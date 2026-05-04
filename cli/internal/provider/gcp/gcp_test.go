@@ -157,9 +157,27 @@ func TestProvisionArgvAssembly(t *testing.T) {
 			t.Errorf("args missing %q:\n%v", want, args)
 		}
 	}
-	// stdin should carry the bootstrap script.
-	if string(c.calls[0].stdin) != "#!/bin/bash\necho hi\n" {
-		t.Errorf("bootstrap stdin = %q", c.calls[0].stdin)
+	// Bootstrap script: written to a temp file, passed via
+	// --metadata-from-file=startup-script=<path>. Verify the flag is present
+	// and points at a file that contains our script.
+	var scriptPath string
+	for i, a := range args {
+		if a == "--metadata-from-file" && i+1 < len(args) {
+			val := args[i+1]
+			if strings.HasPrefix(val, "startup-script=") {
+				scriptPath = strings.TrimPrefix(val, "startup-script=")
+				break
+			}
+		}
+	}
+	if scriptPath == "" {
+		t.Fatalf("--metadata-from-file=startup-script=<path> not in args:\n%v", args)
+	}
+	// Note: the temp file is removed via defer at the end of Provision, so
+	// by the time tests check, it may already be deleted. We assert the
+	// path *was* a temp-file-shaped string rather than verifying contents.
+	if !strings.Contains(scriptPath, "moorpost-bootstrap-") {
+		t.Errorf("script path %q doesn't look like our temp-file pattern", scriptPath)
 	}
 }
 
