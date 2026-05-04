@@ -2,11 +2,18 @@
 // suitable for detecting "did anything change since the last sync."
 //
 // The hash covers every regular file and symlink under root, identified by
-// the tuple {relpath, size, mtime_ns}. We deliberately don't read file
-// contents — agent session-state directories can be large and a stat-based
-// hash is fast + cheap. mtime_ns gives us nanosecond granularity (where
-// the filesystem supports it) so adjacent edits within the same second
-// still produce different hashes.
+// the tuple {relpath, size, mtime_seconds}. We deliberately don't read
+// file contents — agent session-state directories can be large and a
+// stat-based hash is fast + cheap. Second-level granularity is enough for
+// detecting handoff/return divergence (sub-second back-to-back edits are
+// not a realistic case).
+//
+// The hash format MUST match what the remote shell pipeline produces in
+// remote_manifest.go (find + awk + sort | sha256sum). Each line is
+// "{relpath}\t{size}\t{mtime_seconds}\n" (note trailing newline), and the
+// hash covers the concatenation of all sorted lines. This means a
+// LocalManifest call against a directory and a RemoteManifest call
+// against the same logical directory produce identical hex outputs.
 //
 // Used by `moorpost handoff` / `moorpost return` to detect the case the
 // PLUGIN.md spec (line 261) calls fatal: both local and remote have
@@ -23,7 +30,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // LocalManifest returns a SHA-256 hex hash of the directory's content.
@@ -92,8 +98,10 @@ func LocalManifest(root string) (string, error) {
 			return nil
 		}
 		size := fi.Size()
-		mtimeNs := fi.ModTime().UnixNano()
-		lines = append(lines, fmt.Sprintf("%s\t%d\t%d", rel, size, mtimeNs))
+		mtimeSec := fi.ModTime().Unix()
+		// Each line gets a trailing \n so the byte-stream matches what
+		// `find ... | sort | sha256sum` produces remotely.
+		lines = append(lines, fmt.Sprintf("%s\t%d\t%d\n", rel, size, mtimeSec))
 		return nil
 	})
 	if err != nil {
@@ -102,7 +110,9 @@ func LocalManifest(root string) (string, error) {
 
 	sort.Strings(lines)
 	h := sha256.New()
-	h.Write([]byte(strings.Join(lines, "\n")))
+	for _, line := range lines {
+		h.Write([]byte(line))
+	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/latent-advisory/moorpost/cli/internal/agent"
+	"github.com/latent-advisory/moorpost/cli/internal/session"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 	"github.com/spf13/cobra"
@@ -31,23 +32,38 @@ optionally stops the VM (default).`,
 			return err
 		}
 		return RunReturn(cmd.Context(), cmd.OutOrStdout(), c, ReturnOptions{
-			Stop: returnFlagStop,
-			Now:  nil,
+			Stop:         returnFlagStop,
+			PreferLocal:  returnFlagPreferLocal,
+			PreferRemote: returnFlagPreferRemote,
+			Now:          nil,
 		})
 	},
 }
 
-var returnFlagStop bool
+var (
+	returnFlagStop         bool
+	returnFlagPreferLocal  bool
+	returnFlagPreferRemote bool
+)
 
 func init() {
 	returnCmd.Flags().BoolVar(&returnFlagStop, "stop", true, "stop the VM after returning (saves money)")
+	returnCmd.Flags().BoolVar(&returnFlagPreferLocal, "prefer-local", false, "abort if local has changed since last sync (use when local should win)")
+	returnCmd.Flags().BoolVar(&returnFlagPreferRemote, "prefer-remote", false, "force-pull remote state, overwriting any divergence on local")
 	rootCmd.AddCommand(returnCmd)
 }
 
 // ReturnOptions controls RunReturn.
 type ReturnOptions struct {
 	Stop bool
-	Now  func() time.Time
+	// PreferLocal asserts the local copy is authoritative; refuse to
+	// overwrite local with remote if local has diverged since the last
+	// successful sync.
+	PreferLocal bool
+	// PreferRemote forces a pull regardless of local divergence;
+	// equivalent to "I know remote is right, overwrite anything else."
+	PreferRemote bool
+	Now          func() time.Time
 }
 
 // RunReturn executes the remote→local pull and updates state.
@@ -57,6 +73,9 @@ func RunReturn(ctx context.Context, out io.Writer, c *Context, opts ReturnOption
 	}
 	if c == nil || c.Provider == nil || c.Agent == nil || c.Sync == nil {
 		return errors.New("return: incomplete context")
+	}
+	if opts.PreferLocal && opts.PreferRemote {
+		return errors.New("return: --prefer-local and --prefer-remote are mutually exclusive")
 	}
 	now := opts.Now
 	if now == nil {
@@ -90,7 +109,22 @@ func RunReturn(ctx context.Context, out io.Writer, c *Context, opts ReturnOption
 
 	// Pull session state.
 	localState := c.Agent.SessionStatePath(c.ProjectDir)
+	var newWatermark string
 	if localState != "" {
+		// Symmetric to handoff: detect local divergence before overwriting
+		// local with remote. If local has changed since the last sync
+		// (indicating something modified local while remote was active —
+		// shouldn't normally happen but matches PLUGIN.md §6.5 line 261's
+		// "both sides modified" case), --prefer-local refuses to overwrite.
+		localManifest, manifestErr := session.LocalManifest(localState)
+		if manifestErr != nil {
+			fmt.Fprintf(out, "warning: could not compute local session-state manifest: %v\n", manifestErr)
+		}
+		localDiverged := manifestErr == nil && ps.LastSessionSyncHash != "" && localManifest != ps.LastSessionSyncHash
+		if localDiverged && opts.PreferLocal {
+			return fmt.Errorf("return: local session state has changed since last sync (--prefer-local refuses to overwrite local with remote; use --prefer-remote if remote should win, or run `moorpost handoff --prefer-local` first to push local)")
+		}
+
 		remoteState := remoteSessionStateFor(c)
 		fmt.Fprintf(out, "Syncing agent session state ← %s ...\n", tgt.Host)
 		if err := c.Sync.OneShot(ctx,
@@ -100,13 +134,21 @@ func RunReturn(ctx context.Context, out io.Writer, c *Context, opts ReturnOption
 		); err != nil {
 			fmt.Fprintf(out, "warning: session state sync failed: %v\n", err)
 		}
+		// Recompute the manifest AFTER the pull to capture remote's state
+		// as the new watermark. If the OneShot failed, this is still a
+		// reasonable best-effort — we'll detect divergence on the next sync.
+		newWatermark, _ = session.LocalManifest(localState)
 	}
 
-	// Update state: active_side=local, LastReturn stamped, clear sync session.
+	// Update state: active_side=local, LastReturn stamped, clear sync session,
+	// refresh the session-state watermark to local (post-pull) content.
 	if err := withProjectState(c, func(p *state.ProjectState) error {
 		p.LastReturn = now()
 		p.ActiveSide = state.SideLocal
 		p.SyncSessionID = ""
+		if newWatermark != "" {
+			p.LastSessionSyncHash = newWatermark
+		}
 		return nil
 	}); err != nil {
 		return err
