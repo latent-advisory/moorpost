@@ -2,7 +2,7 @@
 
 > Tether your laptop to a remote forward base where Claude Code keeps working.
 
-**Status:** pre-alpha. Works end-to-end on macOS + GCP, validated against real Ubuntu 24.04 with `claude --version` returning successfully on a fresh VM. Not yet released; install from source.
+**Status:** v1.0 functional surface complete. Works end-to-end on macOS + GCP, validated against real Ubuntu 24.04 with `claude --version` returning successfully on a fresh VM. Not yet on the VSCode marketplace (deferred to v1.1); install from source via `make install` + `code --install-extension extension/moorpost-X.Y.Z.vsix`. See [RELEASING.md](RELEASING.md) for the v1.0 tagging checklist.
 
 Moorpost lets a developer **work locally by default and hand off to a remote VM with one click when stepping away**. Same surviving-laptop-close benefit as always-remote setups, ~80% cheaper because the VM is stopped between handoffs.
 
@@ -15,26 +15,24 @@ Existing solutions force a tradeoff: Codespaces / Cursor cloud lock you in; Code
 ## Quickstart (60 seconds, given prerequisites)
 
 ```bash
-# Prereqs (one-time, ~2 min):
-brew install --cask google-cloud-sdk
-brew install mutagen-io/mutagen/mutagen tmux
-npm install -g @anthropic-ai/claude-code
-gcloud auth login
-gcloud services enable compute.googleapis.com --project=YOUR_GCP_PROJECT
-
 # Build moorpost:
 cd /path/to/moorpost && make build && make install
 
+# One-time setup — wraps brew/npm installs + gcloud auth + Compute API:
+moorpost setup                         # interactive prereq installer
+moorpost auth                          # stash Claude OAuth token
+
 # In your project directory:
-moorpost auth                          # one-time: stash Claude OAuth token
-moorpost init --gcp-project=YOUR_GCP_PROJECT --slug=myproject
+moorpost init                          # auto-detects gcloud project
 moorpost provision                     # creates VM, leaves it stopped
 moorpost handoff                       # when stepping away
 # laptop sleeps; Claude keeps working on the VM
 moorpost return                        # when you're back; stops VM
 ```
 
-See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough.
+`moorpost setup` covers brew (gcloud, mutagen, tmux), npm (`@anthropic-ai/claude-code`),
+`gcloud auth login`, and Compute Engine API enablement so first-run users
+don't have to remember each step. Full walkthrough in [docs/quickstart.md](docs/quickstart.md).
 
 ## Architecture
 
@@ -81,10 +79,15 @@ Default is local-first; opt into always-on with `moorpost up --persistent`. v1.1
 
 ## Status & roadmap
 
-- **v0.1.0** (current): CLI walking skeleton, end-to-end validated on real GCP. 16 commands, 14 internal packages, ~5,000 LOC + ~5,500 LOC tests.
-- **v0.2** (next): VSCode extension MVP, continuous mutagen project-file sync, smart handoff prompts (lid-close, VSCode quit, idle, battery-low).
-- **v1.1**: Hetzner Cloud provider (~$8/mo always-on baseline).
-- **v2**: AWS, Azure, multi-agent (Cursor / Aider / Codex / Gemini), team mode.
+- **v1.0** (current — functional surface complete, see [RELEASING.md](RELEASING.md) for tag checklist):
+  - CLI: 19 commands across 19 internal packages
+  - VSCode extension: tree view, smart handoff prompts (focus-loss / idle / OS-sleep), conflict surface, right-click context menu, status bar
+  - Cost protection: pre-flight monthly cap, transparent rescaled estimates, VM-side auto-stop on idle (`mode: persistent`)
+  - Sync model: continuous bidirectional mutagen for project files; one-shot rsync for agent session state at handoff/return boundaries
+  - Conflict resolution: `moorpost conflicts` listing UX + `--prefer-local` / `--prefer-remote` flags on handoff/return
+  - Three-interface extensibility (`Provider` / `Agent` / `Sync`) ready for v1.1
+- **v1.1**: Hetzner Cloud provider (~$8/mo always-on baseline), real Cloud Billing API integration (replacing the v1.0 list-price estimator behind a `--actual` flag), VSCode marketplace listing.
+- **v2**: AWS, Azure, multi-agent (Cursor / Aider / Codex / Gemini), team mode with multi-laptop coordination (per [PLUGIN.md §10 #11](PLUGIN.md)).
 
 Full milestone breakdown in [PLUGIN.md §9](PLUGIN.md#9-implementation-milestones).
 

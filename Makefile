@@ -1,7 +1,7 @@
 # Moorpost — top-level Makefile
 # All real work happens in cli/. This is just convenience wrappers.
 
-.PHONY: build test test-race e2e e2e-autostop cover install clean lint release \
+.PHONY: build test test-race e2e e2e-autostop smoke cover install clean lint release \
         extension-install extension-build extension-package help
 
 # Default GCP project for E2E tests; override with: make e2e-autostop GCP_PROJECT=...
@@ -39,6 +39,9 @@ cover: ## Show test coverage per package
 
 e2e: ## Run real-GCP E2E tests (creates VMs; cost guardrails apply)
 	cd $(CLI) && go test -v -tags=gcp_e2e -timeout=18m ./internal/provider/gcp/...
+
+smoke: build test-race lint extension-build ## Pre-tag gate (no GCP): build + test-race + lint + extension-build
+	@echo "✓ smoke gate passed"
 
 e2e-autostop: ## Run only the persistent-mode auto-stop E2E with pre-flight orphan check (~$0.005)
 	@echo "Pre-flight: checking for orphan moorpost-test VMs in $(GCP_PROJECT)..."
