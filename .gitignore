@@ -1,0 +1,37 @@
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Build artifacts
+extension/out/
+extension/dist/
+extension/*.vsix
+extension/node_modules/
+
+cli/bin/
+cli/dist/
+cli/coverage.out
+cli/moorpost
+cli/moorpost.exe
+
+# Go
+*.exe
+*.test
+vendor/
+
+# Node
+node_modules/
+.pnpm-store/
+
+# Local state / secrets
+.env
+.env.*
+!.env.example
+.moorpost-local/
+
+# Logs
+*.log
+.cache/
+.tmp/
+.loop/
