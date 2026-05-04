@@ -101,6 +101,9 @@ func TestDeriveSlug(t *testing.T) {
 
 func TestRunInitWithoutGCPProjectStillSucceeds(t *testing.T) {
 	// User can edit the file later; init shouldn't block on this.
+	// Stub the auto-detector so the test is deterministic regardless of the
+	// host's gcloud config.
+	withDetectGCPProject(t, func() string { return "" })
 	dir := t.TempDir()
 	var out bytes.Buffer
 	if err := RunInit(&out, InitOptions{Dir: dir, Slug: "x"}); err != nil {

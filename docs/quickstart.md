@@ -6,40 +6,12 @@ This walks you through Moorpost end-to-end on macOS. Linux is similar but file p
 
 You need:
 
-- **macOS or Linux** (Windows comes in v1.1)
+- **macOS or Linux** (Windows: not yet)
 - **GCP project** with billing enabled (cost cap below)
 - A **Claude Code subscription** (Pro/Max/Team) for the OAuth token, or an `ANTHROPIC_API_KEY` for API-key mode
-- **gcloud, mutagen, tmux, claude** on PATH
+- **Homebrew** (macOS) or apt (Linux) for installing the rest
 
-```bash
-# macOS via Homebrew:
-brew install --cask google-cloud-sdk
-brew install mutagen-io/mutagen/mutagen tmux ripgrep
-npm install -g @anthropic-ai/claude-code
-
-# verify
-gcloud --version
-mutagen version
-tmux -V
-claude --version
-```
-
-## 2. One-time GCP setup
-
-```bash
-# Sign in
-gcloud auth login
-
-# Set the active project
-gcloud config set project YOUR_GCP_PROJECT
-
-# Enable Compute Engine API (one-time, free, additive)
-gcloud services enable compute.googleapis.com --project=YOUR_GCP_PROJECT
-```
-
-If you skip the third step, `moorpost provision` will fail with a clear hint pointing back here. (See [troubleshooting.md](troubleshooting.md#compute-engine-api-not-enabled).)
-
-## 3. Build moorpost
+## 2. Build moorpost
 
 ```bash
 git clone https://github.com/latent-advisory/moorpost.git
@@ -47,6 +19,26 @@ cd moorpost
 make build install   # installs `moorpost` binary to /usr/local/bin
 moorpost --version
 ```
+
+## 3. One-shot setup (the `moorpost setup` command)
+
+```bash
+moorpost setup
+# Detects which prereqs are missing (gcloud, mutagen, tmux, ripgrep, rsync,
+# node, claude). For each missing, prompts to install via brew/npm.
+#
+# Use --yes to skip per-prereq prompts. Use --dry-run to preview.
+```
+
+After setup completes:
+
+```bash
+gcloud auth login
+gcloud config set project YOUR_GCP_PROJECT
+gcloud services enable compute.googleapis.com --project=YOUR_GCP_PROJECT
+```
+
+If you skip the last command, `moorpost provision` will fail with a clear hint. See [troubleshooting.md](troubleshooting.md#compute-engine-api-not-enabled).
 
 ## 4. Authenticate
 
@@ -63,8 +55,9 @@ You only need to do this once per machine, not per project.
 
 ```bash
 cd /path/to/your/project   # e.g., your existing repo
-moorpost init --gcp-project=YOUR_GCP_PROJECT --slug=myproject
-# writes .moorpost/config.yaml with sensible defaults
+moorpost init             # auto-detects GCP project from gcloud config
+# Or specify explicitly:
+# moorpost init --gcp-project=YOUR_GCP_PROJECT --slug=myproject
 ```
 
 Inspect/edit `.moorpost/config.yaml` if needed. Defaults: `e2-standard-2`, `100GB pd-standard`, `us-central1-a`, local-first mode. Cost: ~$0.067/hr running, $4/mo disk when stopped.

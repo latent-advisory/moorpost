@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -66,6 +67,21 @@ type InitOptions struct {
 	Force       bool
 }
 
+// detectGCPProject returns the active project from gcloud config, or empty
+// if not set. Exposed as a var so tests can stub.
+var detectGCPProject = func() string {
+	out, err := exec.Command("gcloud", "config", "get-value", "project", "--quiet").Output()
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(out))
+	// gcloud prints "(unset)" or empty when no active project.
+	if s == "" || s == "(unset)" {
+		return ""
+	}
+	return s
+}
+
 // RunInit creates .moorpost/config.yaml in opts.Dir. Exposed for testing.
 func RunInit(out io.Writer, opts InitOptions) error {
 	dir := opts.Dir
@@ -80,6 +96,15 @@ func RunInit(out io.Writer, opts InitOptions) error {
 	if slug == "" {
 		slug = deriveSlug(filepath.Base(dir))
 	}
+
+	// Auto-detect GCP project from gcloud config if not provided.
+	if opts.GCPProject == "" {
+		if detected := detectGCPProject(); detected != "" {
+			fmt.Fprintf(out, "Auto-detected GCP project from gcloud config: %s\n", detected)
+			opts.GCPProject = detected
+		}
+	}
+
 	target := filepath.Join(dir, ".moorpost", "config.yaml")
 	if _, err := os.Stat(target); err == nil && !opts.Force {
 		return fmt.Errorf("moorpost init: %s already exists (use --force to overwrite)", target)
