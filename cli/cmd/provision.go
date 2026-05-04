@@ -120,6 +120,12 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		BootstrapScript:  bootScript,
 	}
 
+	// Preflight: catch missing API/auth before the create call so the user
+	// sees an actionable hint instead of a raw gcloud error mid-create.
+	if err := c.Provider.Preflight(ctx); err != nil {
+		return fmt.Errorf("provision: %w", err)
+	}
+
 	fmt.Fprintf(out, "Provisioning %s in %s...\n", spec.Name, spec.Zone)
 	vm, err := c.Provider.Provision(ctx, spec)
 	if err != nil {

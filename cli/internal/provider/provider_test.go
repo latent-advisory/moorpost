@@ -30,6 +30,7 @@ func (f *fakeProvider) Cost(context.Context, string, TimeRange) (CostBreakdown, 
 func (f *fakeProvider) SSHTarget(context.Context, string) (SSHTarget, error) {
 	return SSHTarget{}, nil
 }
+func (f *fakeProvider) Preflight(context.Context) error { return nil }
 
 func newFake(id string) Constructor {
 	return func(map[string]any) (Provider, error) {

@@ -121,6 +121,43 @@ func init() {
 
 func (e *engine) ID() string { return ProviderID }
 
+// Preflight validates auth + API enablement before any provisioning call.
+// Returns nil if ready; otherwise a multi-line error listing each problem
+// with the remediation command.
+func (e *engine) Preflight(ctx context.Context) error {
+	var problems []string
+
+	// 1. Active gcloud auth.
+	stdout, _, code, err := e.exec.Run(ctx, e.binary,
+		[]string{"auth", "list", "--filter=status:ACTIVE", "--format=value(account)"},
+		nil)
+	if err != nil || code != 0 || strings.TrimSpace(string(stdout)) == "" {
+		problems = append(problems,
+			"  - no active gcloud account; run: gcloud auth login")
+	}
+
+	// 2. Compute Engine API enabled on the configured project.
+	stdout, _, code, err = e.exec.Run(ctx, e.binary,
+		[]string{"services", "list", "--enabled",
+			"--project=" + e.project,
+			"--filter=name:compute.googleapis.com",
+			"--format=value(name)"},
+		nil)
+	if err != nil {
+		problems = append(problems,
+			fmt.Sprintf("  - cannot check API enablement on project %q: %v", e.project, err))
+	} else if code != 0 || !strings.Contains(string(stdout), "compute.googleapis.com") {
+		problems = append(problems, fmt.Sprintf(
+			"  - Compute Engine API not enabled on project %q\n    fix: gcloud services enable compute.googleapis.com --project=%s",
+			e.project, e.project))
+	}
+
+	if len(problems) == 0 {
+		return nil
+	}
+	return fmt.Errorf("gcp preflight failed:\n%s", strings.Join(problems, "\n"))
+}
+
 // gcloudArgs prepends the project + format flags every command needs.
 func (e *engine) gcloudArgs(args ...string) []string {
 	out := []string{"--project", e.project, "--quiet"}

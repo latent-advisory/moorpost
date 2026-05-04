@@ -33,6 +33,8 @@ type fakeProvider struct {
 
 	sshTarget provider.SSHTarget
 	sshErr    error
+
+	preflightErr error
 }
 
 func (f *fakeProvider) ID() string { return "fake" }
@@ -85,6 +87,9 @@ func (f *fakeProvider) SSHTarget(_ context.Context, _ string) (provider.SSHTarge
 		return provider.SSHTarget{}, f.sshErr
 	}
 	return f.sshTarget, nil
+}
+func (f *fakeProvider) Preflight(_ context.Context) error {
+	return f.preflightErr
 }
 
 // makeLifecycleContext builds a Context with a fake provider, a temp state

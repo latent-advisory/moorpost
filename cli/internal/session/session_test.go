@@ -31,6 +31,7 @@ func (stubProvider) Cost(context.Context, string, provider.TimeRange) (provider.
 func (stubProvider) SSHTarget(context.Context, string) (provider.SSHTarget, error) {
 	return provider.SSHTarget{}, nil
 }
+func (stubProvider) Preflight(context.Context) error { return nil }
 
 type stubAgent struct{}
 

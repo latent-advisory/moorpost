@@ -50,6 +50,15 @@ type Provider interface {
 
 	// SSHTarget returns the network coordinates and OS user for SSH access.
 	SSHTarget(ctx context.Context, vmID string) (SSHTarget, error)
+
+	// Preflight validates that the provider is ready to provision: auth is
+	// configured, required APIs are enabled, and other one-time setup is
+	// in place. Returns nil if ready; otherwise a multi-line error with
+	// remediation hints. Cheap to call (one or two API list-style requests).
+	//
+	// Used by `moorpost provision` before any cloud-creating call, and by
+	// `moorpost doctor` when a project config is present.
+	Preflight(ctx context.Context) error
 }
 
 // ProvisionSpec describes a VM to create. Fields not used by a given provider

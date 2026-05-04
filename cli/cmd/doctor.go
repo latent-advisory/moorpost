@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/latent-advisory/moorpost/cli/internal/keychain"
+	_ "github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -14,7 +15,16 @@ var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run diagnostics: check that all Moorpost prerequisites are present",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return RunDoctor(cmd.Context(), cmd.OutOrStdout(), defaultDoctorChecks())
+		checks := defaultDoctorChecks()
+		// If a project config is reachable from cwd, also run the configured
+		// Provider's preflight (e.g. GCP auth + API enablement).
+		if c, err := loadProjectContext(ContextOptions{
+			Stdout: cmd.OutOrStdout(),
+			Stderr: cmd.ErrOrStderr(),
+		}); err == nil && c.Provider != nil {
+			checks = append(checks, checkProviderPreflight(c.Provider, c.Config.Provider.Type))
+		}
+		return RunDoctor(cmd.Context(), cmd.OutOrStdout(), checks)
 	},
 }
 
@@ -93,6 +103,30 @@ func checkBinaryAvailable(name, hint string) Check {
 			Name:     fmt.Sprintf("%s on PATH", name),
 			Severity: "ok",
 			Detail:   path,
+		}
+	}
+}
+
+// checkProviderPreflight runs the configured Provider's Preflight method.
+// Failures are FAIL severity (the user can't provision until they're fixed);
+// the Hint is the multi-line preflight error.
+func checkProviderPreflight(p interface {
+	Preflight(ctx context.Context) error
+}, providerID string) Check {
+	return func(ctx context.Context) CheckResult {
+		err := p.Preflight(ctx)
+		if err == nil {
+			return CheckResult{
+				Name:     fmt.Sprintf("%s preflight", providerID),
+				Severity: "ok",
+				Detail:   "auth + APIs ready",
+			}
+		}
+		return CheckResult{
+			Name:     fmt.Sprintf("%s preflight", providerID),
+			Severity: "fail",
+			Detail:   "not ready",
+			Hint:     err.Error(),
 		}
 	}
 }
