@@ -1,8 +1,11 @@
 # Moorpost — top-level Makefile
 # All real work happens in cli/. This is just convenience wrappers.
 
-.PHONY: build test test-race e2e cover install clean lint release \
+.PHONY: build test test-race e2e e2e-autostop cover install clean lint release \
         extension-install extension-build extension-package help
+
+# Default GCP project for E2E tests; override with: make e2e-autostop GCP_PROJECT=...
+GCP_PROJECT ?= latent-advisory
 
 CLI := cli
 BIN := moorpost
@@ -36,6 +39,20 @@ cover: ## Show test coverage per package
 
 e2e: ## Run real-GCP E2E tests (creates VMs; cost guardrails apply)
 	cd $(CLI) && go test -v -tags=gcp_e2e -timeout=18m ./internal/provider/gcp/...
+
+e2e-autostop: ## Run only the persistent-mode auto-stop E2E with pre-flight orphan check (~$0.005)
+	@echo "Pre-flight: checking for orphan moorpost-test VMs in $(GCP_PROJECT)..."
+	@orphans="$$(gcloud compute instances list --project=$(GCP_PROJECT) \
+	    --filter=tags.items:moorpost-test --format='value(name)')"; \
+	if [ -n "$$orphans" ]; then \
+	    echo "ABORT: orphan moorpost-test VMs found:"; echo "$$orphans"; \
+	    echo "Destroy them first with: gcloud compute instances delete <name> --project=$(GCP_PROJECT) --zone=<zone> --quiet"; \
+	    exit 1; \
+	fi
+	@echo "Pre-flight ok. Running auto-stop E2E (15-25 min wall-clock; ~\$$0.005)..."
+	cd $(CLI) && MOORPOST_E2E_PROJECT=$(GCP_PROJECT) go test -v -tags=gcp_e2e \
+	    -run=TestGCPPersistentAutoStop_E2E -timeout=30m \
+	    ./internal/provider/gcp/...
 
 install: build ## Install the binary to /usr/local/bin
 	install -m 0755 $(CLI)/$(BIN) /usr/local/bin/$(BIN)
