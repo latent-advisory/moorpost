@@ -44,6 +44,11 @@ type statusReport struct {
 	VMID       string  `json:"vm_id,omitempty"`
 	VMState    string  `json:"vm_state,omitempty"`
 	MTDCostUSD float64 `json:"month_to_date_usd,omitempty"`
+	// AuthCached reports whether the configured agent has a cached
+	// credential in the OS keychain. Always emitted (true or false) so
+	// the extension can route the status-bar click to the right next
+	// step (auth vs. provision vs. handoff).
+	AuthCached bool `json:"auth_cached"`
 	// Conflicts is the unresolved-conflict count from the active sync
 	// session, if any. -1 means "session known but conflict count is
 	// unavailable" (e.g., mutagen daemon down). Omitted when no session.
@@ -59,11 +64,12 @@ func RunStatus(out io.Writer, c *Context, asJSON bool) error {
 		return fmt.Errorf("status: no project context loaded")
 	}
 	report := statusReport{
-		Project:  c.Config.ProjectSlug,
-		Provider: c.Config.Provider.Type,
-		Agent:    c.Config.Agent.Type,
-		Sync:     c.Config.Sync.Engine,
-		Mode:     string(c.Config.Mode),
+		Project:    c.Config.ProjectSlug,
+		Provider:   c.Config.Provider.Type,
+		Agent:      c.Config.Agent.Type,
+		Sync:       c.Config.Sync.Engine,
+		Mode:       string(c.Config.Mode),
+		AuthCached: authCached(),
 	}
 	if c.State != nil {
 		// Look up project by absolute project dir; fall back to slug match.

@@ -44,8 +44,15 @@ async function refresh(): Promise<void> {
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     return;
   }
-  // Configured but unprovisioned — "in-between" state. Surface it
-  // explicitly so the user doesn't think a click means handoff.
+  // Auth not cached — surface the "sign in" gap before "no VM" since
+  // provisioning a VM you can't hand off to is a dead-end.
+  if (status.auth_cached === false) {
+    item.text = '$(key) Moorpost · sign in needed · click';
+    item.tooltip = `Project: ${status.project}\nClick to run \`moorpost auth\` (Claude OAuth flow).`;
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    return;
+  }
+  // Configured + auth'd but unprovisioned — "in-between" state.
   if (!status.vm_id) {
     item.text = '$(server-environment) Moorpost · no VM · click to provision';
     item.tooltip = `Project: ${status.project}\nClick to provision the GCP VM (one-time, ~30s).`;

@@ -51,6 +51,23 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
+      // Soft-warn on missing auth so the user doesn't end up with a
+      // provisioned-but-unhandoffable VM. Not blocking — provisioning
+      // itself doesn't need auth.
+      const status = await getStatus(cwd);
+      if (status && status.auth_cached === false) {
+        const pick = await vscode.window.showWarningMessage(
+          'No Claude credential cached. The VM will provision fine, but you won\'t be able to hand off until you sign in.',
+          'Sign in first',
+          'Provision anyway',
+          'Cancel',
+        );
+        if (pick === 'Cancel' || !pick) return;
+        if (pick === 'Sign in first') {
+          await vscode.commands.executeCommand('moorpost.signIn');
+          return;
+        }
+      }
       // --wait makes the CLI poll SSH until claude is on PATH on the VM,
       // so the user gets a single "ready to handoff" signal instead of
       // a misleading "VM running" while the 5-7min bootstrap continues
@@ -82,6 +99,17 @@ export function registerCommands(
         );
         if (pick === 'Run Bootstrap') {
           await vscode.commands.executeCommand('moorpost.bootstrap');
+        }
+        return;
+      }
+      if (status.auth_cached === false) {
+        const pick = await vscode.window.showWarningMessage(
+          'Not signed in to Claude. Sign in before handoff.',
+          'Sign in',
+          'Dismiss',
+        );
+        if (pick === 'Sign in') {
+          await vscode.commands.executeCommand('moorpost.signIn');
         }
         return;
       }

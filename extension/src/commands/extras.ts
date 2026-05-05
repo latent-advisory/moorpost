@@ -29,11 +29,13 @@ export async function editConfig(): Promise<void> {
 }
 
 /**
- * Single-action toggle that does the right thing for the current state:
- *   no config / no project    → bootstrap
- *   configured, no VM         → provision
- *   configured, has VM, local → handoff
- *   configured, has VM, remote → return
+ * Single-action toggle that routes to the next-needed step in the setup
+ * lifecycle:
+ *   no config              → bootstrap
+ *   no auth credential     → sign in
+ *   configured but no VM   → provision
+ *   configured + VM, local → handoff
+ *   configured + VM, remote → return
  *
  * Wired to the status bar click and exposed as a palette command.
  */
@@ -48,8 +50,15 @@ export async function toggleSide(): Promise<void> {
     await vscode.commands.executeCommand('moorpost.bootstrap');
     return;
   }
+  if (status.auth_cached === false) {
+    // Config exists but the keychain has no Claude credential — usually
+    // means a partial bootstrap (auth was skipped/cancelled). Drive
+    // straight to sign-in instead of letting them provision a VM they
+    // can't hand off to.
+    await vscode.commands.executeCommand('moorpost.signIn');
+    return;
+  }
   if (!status.vm_id) {
-    // Configured but unprovisioned — the next step in the setup flow.
     await vscode.commands.executeCommand('moorpost.provision');
     return;
   }

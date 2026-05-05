@@ -29,6 +29,9 @@ export interface StatusReport {
   vm_id?: string;
   vm_state?: string;
   month_to_date_usd?: number;
+  // True if the configured agent has a cached credential (OS keychain).
+  // Always emitted by the CLI; defaults to false on older binaries.
+  auth_cached?: boolean;
   // Conflict surface — populated only when a sync session is active.
   has_sync_session?: boolean;
   sync_session_id?: string;
