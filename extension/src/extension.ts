@@ -9,6 +9,7 @@ import { maybeShowFirstRunNudge, startConfiguredContextWatcher } from './command
 import { setupStatusBar } from './statusBar';
 import { MoorpostTreeProvider } from './treeView';
 import { IdleMonitor } from './idleMonitor';
+import { registerRemoteSessionWatchers } from './remoteSession';
 
 export function activate(context: vscode.ExtensionContext): void {
   const treeProvider = new MoorpostTreeProvider();
@@ -20,6 +21,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerCommands(context, treeProvider);
   setupStatusBar(context);
   startConfiguredContextWatcher(context);
+  registerRemoteSessionWatchers(context);
   void maybeShowFirstRunNudge(context);
 
   const idle = new IdleMonitor();

@@ -259,6 +259,11 @@
           "default": 15,
           "minimum": 0,
           "description": "Show a 'hand off to remote?' prompt after this many minutes of editor inactivity. Also fires when the OS appears to wake from sleep. Set to 0 to disable."
+        },
+        "moorpost.autoAttachOnHandoff": {
+          "type": "boolean",
+          "default": true,
+          "description": "After a successful Handoff, automatically open an integrated terminal attached to the remote Claude session. Disable if you prefer to attach manually."
         }
       }
     }
