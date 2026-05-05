@@ -57,6 +57,11 @@ type statusReport struct {
 	Conflicts        int    `json:"conflicts,omitempty"`
 	HasSyncSession   bool   `json:"has_sync_session,omitempty"`
 	SyncSessionID    string `json:"sync_session_id,omitempty"`
+	// AgentSessionID is the Claude Code session ID currently bound to
+	// this project (the value used for `claude --resume <id>`). The
+	// extension uses it to auto-resume the right session when re-opening
+	// the local Claude terminal after a return.
+	AgentSessionID string `json:"agent_session_id,omitempty"`
 }
 
 // RunStatus prints the project status. If asJSON is true, emits the report
@@ -79,6 +84,7 @@ func RunStatus(out io.Writer, c *Context, asJSON bool) error {
 			if ps.Slug == c.Config.ProjectSlug || absPath == c.ProjectDir {
 				report.ActiveSide = string(ps.ActiveSide)
 				report.VMID = ps.VMID
+				report.AgentSessionID = ps.AgentSessionID
 				if vm, ok := c.State.VMs[ps.VMID]; ok {
 					report.VMState = vm.StateCache
 					report.MTDCostUSD = vm.MonthToDateUSD

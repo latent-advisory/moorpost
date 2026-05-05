@@ -36,6 +36,11 @@ export interface StatusReport {
   has_sync_session?: boolean;
   sync_session_id?: string;
   conflicts?: number;
+  // The Claude Code session ID bound to this project (optional —
+  // present after the first handoff records it). Used by the
+  // extension to `claude --resume <id>` when reopening the local
+  // Moorpost: Claude terminal.
+  agent_session_id?: string;
 }
 
 /**

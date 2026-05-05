@@ -7,7 +7,11 @@ import type { MoorpostTreeProvider } from '../treeView';
 import { bootstrapProject, initProject } from './getStarted';
 import { editConfig, toggleSide } from './extras';
 import { runCliInOutput } from '../output';
-import { closeAttachQuietly, openOrFocusAttach } from '../remoteSession';
+import {
+  closeClaudeTerminalQuietly,
+  openLocalClaude,
+  openRemoteClaude,
+} from '../claudeTerminal';
 import { refreshStatusBarNow } from '../statusBar';
 
 export function registerCommands(
@@ -134,7 +138,7 @@ export function registerCommands(
           'Return to local',
           'Dismiss',
         );
-        if (pick === 'Open live session') openOrFocusAttach(cwd);
+        if (pick === 'Open live session') openRemoteClaude(cwd);
         else if (pick === 'Return to local')
           await vscode.commands.executeCommand('moorpost.return');
         return;
@@ -160,7 +164,7 @@ export function registerCommands(
           .getConfiguration('moorpost')
           .get<boolean>('autoAttachOnHandoff', true);
         if (auto) {
-          openOrFocusAttach(cwd);
+          openRemoteClaude(cwd);
         }
       }
     }),
@@ -193,15 +197,31 @@ export function registerCommands(
         return;
       }
 
-      // Close the attached terminal first so the disconnect-warning
+      // Close the remote attach terminal first so the disconnect-warning
       // logic doesn't trip when SSH drops as part of the planned return.
-      closeAttachQuietly();
-      await runCliInOutput(['return'], {
+      closeClaudeTerminalQuietly();
+      const exit = await runCliInOutput(['return'], {
         cwd,
         title: 'Returning to local',
         reveal: 'on-error',
       });
       refreshTreeAfter(2000);
+      // After successful return, auto-open the local Claude side in the
+      // same Moorpost: Claude terminal slot. So the user's "single Claude
+      // window" experience continues in local mode without context-switching.
+      if (exit === 0) {
+        const auto = vscode.workspace
+          .getConfiguration('moorpost')
+          .get<boolean>('autoAttachOnHandoff', true);
+        if (auto) {
+          // Pull the agent session id from the latest status so we can
+          // `claude --resume <id>`. Best effort — if missing, just open
+          // a fresh `claude` invocation; the user can pick from the
+          // session picker.
+          const refreshed = await getStatus(cwd);
+          openLocalClaude(cwd, refreshed?.agent_session_id);
+        }
+      }
     }),
 
     vscode.commands.registerCommand('moorpost.status', async () => {
@@ -245,7 +265,7 @@ export function registerCommands(
       // Route through the shared remote-session manager so this terminal
       // is tracked alongside the auto-attached one (single-tracked
       // attach session, disconnect warning, etc.).
-      openOrFocusAttach(cwd);
+      openRemoteClaude(cwd);
     }),
 
     vscode.commands.registerCommand('moorpost.destroy', async () => {
