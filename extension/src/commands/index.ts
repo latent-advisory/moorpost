@@ -50,8 +50,16 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
-      runInTerminal(['provision'], cwd);
-      refreshTreeAfter(5000);
+      // --wait makes the CLI poll SSH until claude is on PATH on the VM,
+      // so the user gets a single "ready to handoff" signal instead of
+      // a misleading "VM running" while the 5-7min bootstrap continues
+      // silently in the background.
+      await runCliInOutput(['provision', '--wait'], {
+        cwd,
+        title: 'Provisioning VM (waiting for bootstrap)',
+        reveal: 'always',
+      });
+      refreshTreeAfter(2000);
     }),
 
     vscode.commands.registerCommand('moorpost.handoff', async () => {

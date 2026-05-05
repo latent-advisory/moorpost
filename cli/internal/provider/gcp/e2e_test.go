@@ -466,7 +466,9 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 	// state transition). Budget: 5 min to keep headroom for slow GCE
 	// state propagation.
 	t.Log("✓ all SSH closed; waiting for VM to auto-stop (≤5min)...")
-	stopDeadline := time.Now().Add(5 * time.Minute)
+	const stopBudget = 5 * time.Minute
+	stopStart := time.Now()
+	stopDeadline := stopStart.Add(stopBudget)
 	pollInterval := 20 * time.Second
 	stopped := false
 	var lastStatus string
@@ -479,7 +481,7 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 		cancelStatus()
 		lastStatus = strings.TrimSpace(string(out))
 		if scode == 0 {
-			t.Logf("VM status: %s (%s elapsed)", lastStatus, time.Since(stopDeadline.Add(-15*time.Minute)).Round(time.Second))
+			t.Logf("VM status: %s (%s elapsed)", lastStatus, time.Since(stopStart).Round(time.Second))
 			if lastStatus == "TERMINATED" || lastStatus == "STOPPED" || lastStatus == "STOPPING" {
 				stopped = true
 				break

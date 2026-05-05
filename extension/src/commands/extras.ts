@@ -83,3 +83,42 @@ export function startConfiguredContextWatcher(
     vscode.workspace.onDidChangeWorkspaceFolders(() => void update()),
   );
 }
+
+/**
+ * On first activation in a workspace without a Moorpost config, prompt the
+ * user with a non-modal "Get started" notification. Stores a flag in
+ * globalState so we don't nag — once dismissed (or accepted), never shown
+ * again on this machine. Skipped silently when the workspace is already
+ * configured (the user clearly knows what Moorpost is).
+ */
+export async function maybeShowFirstRunNudge(
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const KEY = 'moorpost.firstRunNudgeShownAt';
+  if (context.globalState.get<number>(KEY)) return;
+
+  const cwd = workspaceRoot();
+  const status = cwd ? await getStatus(cwd) : null;
+  if (status) {
+    // Already configured — silently mark as seen and move on.
+    await context.globalState.update(KEY, Date.now());
+    return;
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    'Moorpost installed. Run Bootstrap to set up your laptop ↔ remote VM workflow.',
+    'Get Started',
+    'Open walkthrough',
+    'Not now',
+  );
+  await context.globalState.update(KEY, Date.now());
+  if (choice === 'Get Started') {
+    await vscode.commands.executeCommand('moorpost.bootstrap');
+  } else if (choice === 'Open walkthrough') {
+    await vscode.commands.executeCommand(
+      'workbench.action.openWalkthrough',
+      'latent-advisory.moorpost#moorpost.gettingStarted',
+      true,
+    );
+  }
+}

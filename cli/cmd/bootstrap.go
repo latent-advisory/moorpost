@@ -112,9 +112,12 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Step 4: provision (opt-in).
+	// Step 4: provision (opt-in). --wait so the bootstrap orchestrator only
+	// reports success once the VM's startup script has finished and claude
+	// is actually on PATH; otherwise the user might get a false "ready"
+	// signal while apt is still grinding remotely.
 	if bootstrapFlagProvision {
-		if err := stepShell(out, "provision"); err != nil {
+		if err := stepShell(out, "provision", "provision", "--wait"); err != nil {
 			return fmt.Errorf("bootstrap: provision failed: %w", err)
 		}
 	}

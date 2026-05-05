@@ -36,10 +36,16 @@ async function refresh(): Promise<void> {
   const cwd = workspaceRoot();
   const status = await getStatus(cwd);
   if (!status) {
-    item.text = 'Moorpost: not configured';
-    item.tooltip = 'No .moorpost/config.yaml in this workspace. Run `moorpost init`.';
+    // Empty-state: make it visually distinct so the user knows setup is
+    // needed, and align the tooltip with what clicking actually does
+    // (toggleSide runs Bootstrap when no config is found).
+    item.text = '$(warning) Moorpost: not set up · click to start';
+    item.tooltip = 'No Moorpost config found in this workspace. Click to run Bootstrap (one-shot setup).';
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     return;
   }
+  // Clear any prior warning style.
+  item.backgroundColor = undefined;
   const side = status.active_side ?? 'local';
   const icon = side === 'remote' ? '$(cloud)' : '$(home)';
   const vmState = status.vm_state ? ` · ${status.vm_state}` : '';
