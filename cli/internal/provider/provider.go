@@ -163,6 +163,12 @@ type SSHTarget struct {
 	Host string // hostname or IP
 	Port int    // typically 22
 	User string // OS login user (e.g. "landytang")
+	// IdentityFile is the path to the SSH private key the user should
+	// authenticate with. Empty means "rely on ssh's default identity
+	// resolution" (~/.ssh/id_*, ssh-agent). Set by providers that
+	// installed a specific key during Provision (e.g. GCP uses
+	// ~/.ssh/google_compute_engine).
+	IdentityFile string
 }
 
 // ErrCostUnavailable indicates the provider's billing data is not available

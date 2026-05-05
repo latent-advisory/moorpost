@@ -43,9 +43,10 @@ type Credential struct {
 // SSHTarget is a copy of provider.SSHTarget kept here to avoid an agent->provider
 // dependency. Callers convert at the boundary.
 type SSHTarget struct {
-	Host string
-	Port int
-	User string
+	Host         string
+	Port         int
+	User         string
+	IdentityFile string // optional path to private SSH key (-i)
 }
 
 // SessionRef identifies a logical agent session per project. The agent

@@ -86,7 +86,7 @@ type Options struct {
 
 	// TmuxFactory constructs a Tmux for a given remote host. Lets tests
 	// inject a fake. Defaults to tmux.NewRemote over SSHRunner.
-	TmuxFactory func(host string) tmux.Tmux
+	TmuxFactory func(host, identityFile string) tmux.Tmux
 
 	// ReadyPromptRegex is what Pause looks for to consider the agent idle.
 	// Defaults to readyPromptDefault.
@@ -103,7 +103,7 @@ type claudeCode struct {
 	ssh           mpssh.Runner
 	home          string
 	remoteEnvPath string
-	tmuxFactory   func(host string) tmux.Tmux
+	tmuxFactory   func(host, identityFile string) tmux.Tmux
 	readyRE       *regexp.Regexp
 	pauseInterval time.Duration
 }
@@ -150,8 +150,8 @@ func NewWithOptions(opts Options) (agent.Agent, error) {
 		c.remoteEnvPath = DefaultRemoteEnvPath
 	}
 	if c.tmuxFactory == nil {
-		c.tmuxFactory = func(host string) tmux.Tmux {
-			return tmux.NewRemote(c.ssh, host)
+		c.tmuxFactory = func(host, identityFile string) tmux.Tmux {
+			return tmux.NewRemote(c.ssh.WithIdentity(identityFile), host)
 		}
 	}
 	if c.readyRE == nil {
@@ -335,7 +335,8 @@ func (c *claudeCode) InjectCredential(ctx context.Context, target agent.SSHTarge
 	}
 	// Single-quoted shell value so any other special chars are inert.
 	content := []byte(envVar + "='" + cred.Value + "'\n")
-	if err := c.ssh.WriteRemoteFile(ctx, sshHostFor(target), c.remoteEnvPath, content, 0o600); err != nil {
+	runner := c.ssh.WithIdentity(target.IdentityFile)
+	if err := runner.WriteRemoteFile(ctx, sshHostFor(target), c.remoteEnvPath, content, 0o600); err != nil {
 		return fmt.Errorf("claudecode.InjectCredential: %w", err)
 	}
 	return nil
@@ -355,7 +356,7 @@ func (c *claudeCode) Resume(ctx context.Context, target agent.SSHTarget, ref age
 	if ref.ProjectSlug == "" {
 		return errors.New("claudecode.Resume: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(sshHostFor(target))
+	tx := c.tmuxFactory(sshHostFor(target), target.IdentityFile)
 	exists, err := tx.HasSession(ctx, ref.ProjectSlug)
 	if err != nil {
 		return fmt.Errorf("claudecode.Resume: %w", err)
@@ -391,7 +392,7 @@ func (c *claudeCode) IsActive(ctx context.Context, target agent.SSHTarget, ref a
 	if ref.ProjectSlug == "" {
 		return false, errors.New("claudecode.IsActive: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(sshHostFor(target))
+	tx := c.tmuxFactory(sshHostFor(target), target.IdentityFile)
 	return tx.HasSession(ctx, ref.ProjectSlug)
 }
 
@@ -407,7 +408,7 @@ func (c *claudeCode) Pause(ctx context.Context, target agent.SSHTarget, ref agen
 	if ref.ProjectSlug == "" {
 		return errors.New("claudecode.Pause: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(sshHostFor(target))
+	tx := c.tmuxFactory(sshHostFor(target), target.IdentityFile)
 	exists, err := tx.HasSession(ctx, ref.ProjectSlug)
 	if err != nil {
 		return fmt.Errorf("claudecode.Pause: %w", err)

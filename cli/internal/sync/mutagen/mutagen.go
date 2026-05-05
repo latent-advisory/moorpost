@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -117,6 +118,11 @@ func (e *engine) StartSession(ctx context.Context, spec mpsync.SyncSpec) (mpsync
 		"--name", spec.Label,
 		"--mode", mode,
 	}
+	// Mutagen invokes the system `ssh` for remote endpoints and reads the
+	// user's normal ~/.ssh/config + ssh-agent. Stale known_hosts entries
+	// are cleaned by `moorpost provision`; identity-file resolution is
+	// expected to come from the user's ssh-agent (`gcloud compute ssh`
+	// or our handoff path warm it up). No per-create SSH options here.
 	for _, p := range spec.IgnorePatterns {
 		args = append(args, "--ignore", p)
 	}
@@ -419,9 +425,11 @@ func (e *engine) OneShot(ctx context.Context, src, dst mpsync.Endpoint, dir mpsy
 	args := []string{"-a", "--delete"}
 	// Use ssh as the remote shell. -e is needed only when at least one side
 	// is remote; rsync otherwise rejects -e for purely local copies (or
-	// rather it accepts it but it's noise).
+	// rather it accepts it but it's noise). Match the moorpost ssh.Runner's
+	// host-key policy (private known_hosts + accept-new) so re-provisioned
+	// VMs at recycled IPs don't fail with "Host key verification failed".
 	if !src.IsLocal() || !dst.IsLocal() {
-		args = append(args, "-e", "ssh -o BatchMode=yes -o ConnectTimeout=15")
+		args = append(args, "-e", sshRemoteShell())
 	}
 	args = append(args, srcURL, dstURL)
 	_, stderr, code, err := e.exec.Run(ctx, e.rsyncBinary, args, nil)
@@ -443,4 +451,20 @@ func rsyncURL(ep mpsync.Endpoint) string {
 		return ep.Path
 	}
 	return ep.SSHHost + ":" + ep.Path
+}
+
+// sshRemoteShell returns the SSH command rsync uses (-e flag) for remote
+// endpoints. Includes the GCE identity file so a fresh shell with no
+// ssh-agent loaded can still authenticate; accept-new picks up the new
+// host's key automatically (provision.go clears any stale entry first).
+func sshRemoteShell() string {
+	base := "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return base
+	}
+	// GCE-only for v1.0; matches what `moorpost provision` uses as the
+	// public-key default. Future providers should plumb identity through
+	// the Endpoint struct instead.
+	return base + " -i " + home + "/.ssh/google_compute_engine"
 }

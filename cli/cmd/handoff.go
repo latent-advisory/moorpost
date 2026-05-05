@@ -141,7 +141,7 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
 	// agent puts it).
-	agentTarget := agent.SSHTarget{Host: tgt.Host, Port: tgt.Port, User: tgt.User}
+	agentTarget := agent.SSHTarget{Host: tgt.Host, Port: tgt.Port, User: tgt.User, IdentityFile: tgt.IdentityFile}
 	if err := c.Agent.InjectCredential(ctx, agentTarget, cred); err != nil {
 		return fmt.Errorf("handoff: inject credential: %w", err)
 	}

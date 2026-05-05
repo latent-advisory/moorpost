@@ -254,10 +254,10 @@ func statusLabel(running bool) string {
 }
 
 // clearStaleKnownHostsEntry removes any prior host-key entry for ip from
-// moorpost's private known_hosts file (~/.moorpost/known_hosts). Best
-// effort: silently no-ops on missing file, missing ssh-keygen, or any
-// other error — provisioning should never fail because of a known_hosts
-// cleanup quirk.
+// the user's ~/.ssh/known_hosts. ssh, rsync, mutagen all share that file
+// by default; clearing here means the StrictHostKeyChecking=accept-new
+// fallback in ssh.Runner picks up the new VM's host key cleanly. Best
+// effort: failures are noted but don't fail provisioning.
 func clearStaleKnownHostsEntry(out io.Writer, ip string) {
 	if ip == "" {
 		return
@@ -266,16 +266,13 @@ func clearStaleKnownHostsEntry(out io.Writer, ip string) {
 	if err != nil {
 		return
 	}
-	khPath := filepath.Join(home, ".moorpost", "known_hosts")
+	khPath := filepath.Join(home, ".ssh", "known_hosts")
 	if _, err := os.Stat(khPath); errors.Is(err, os.ErrNotExist) {
-		return // never used, nothing to clear
+		return // no known_hosts at all, nothing to clear
 	}
 	cmd := exec.Command("ssh-keygen", "-R", ip, "-f", khPath) // #nosec G204
 	if err := cmd.Run(); err != nil {
-		// Don't surface as an error — the worst case is a stale entry
-		// that the next SSH attempt will fail on, at which point the
-		// user can manually `ssh-keygen -R <ip> -f ~/.moorpost/known_hosts`.
-		fmt.Fprintf(out, "  (note: could not refresh ~/.moorpost/known_hosts for %s: %v)\n", ip, err)
+		fmt.Fprintf(out, "  (note: could not refresh ~/.ssh/known_hosts for %s: %v)\n", ip, err)
 	}
 }
 

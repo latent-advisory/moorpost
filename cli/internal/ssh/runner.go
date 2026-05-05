@@ -3,7 +3,6 @@ package ssh
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 
 	mpexec "github.com/latent-advisory/moorpost/cli/internal/exec"
@@ -22,6 +21,12 @@ type Runner interface {
 	// numeric mode (e.g. 0o600). Parent directory is created if missing.
 	// Atomic via tmp+rename on the remote.
 	WriteRemoteFile(ctx context.Context, host, remotePath string, content []byte, mode int) error
+
+	// WithIdentity returns a derived Runner that prepends `-i <path>` to
+	// every ssh invocation. Used so callers (provider/agent) can hand the
+	// SSH key path through without changing the per-call signatures.
+	// Empty path returns the receiver unchanged.
+	WithIdentity(path string) Runner
 }
 
 // runner is the concrete implementation, parameterized by an Executor so
@@ -57,49 +62,40 @@ func (r *runner) sshBinary() string {
 	return "ssh"
 }
 
+// WithIdentity returns a derived Runner with `-i <path>` prepended to
+// ExtraArgs. Empty path is a no-op (returns the receiver). Allocates a new
+// slice so the receiver's ExtraArgs isn't mutated.
+func (r *runner) WithIdentity(path string) Runner {
+	if path == "" {
+		return r
+	}
+	derived := *r
+	derived.ExtraArgs = append([]string{"-i", path}, r.ExtraArgs...)
+	return &derived
+}
+
 // baseArgs assembles the boilerplate args used for every Run call.
 //
 //   - BatchMode=yes: SSH never prompts; if the user's keys/agent aren't set
 //     up, the call fails fast with a clear error rather than hanging.
 //   - ConnectTimeout=15: same, fast failure on unreachable hosts.
-//   - UserKnownHostsFile + StrictHostKeyChecking=accept-new: isolates
-//     moorpost's host-key state from the user's ~/.ssh/known_hosts so
-//     re-provisioned VMs (same IP, new host key) don't get rejected as
-//     MITM attempts. accept-new still rejects a key change for a host
-//     already in OUR file — provision.go is responsible for clearing
-//     the entry when it knows the VM was recreated.
+//   - StrictHostKeyChecking=accept-new: auto-add unseen hosts (so a
+//     freshly-provisioned VM doesn't fail the first SSH attempt) but
+//     reject changes for known hosts (MITM protection). provision.go
+//     calls `ssh-keygen -R <ip>` after each provision to clear stale
+//     entries from prior VMs at the same IP.
 //
-// Tests can override the known_hosts path via ExtraArgs.
+// Tests can override the host-key behavior via ExtraArgs (passed before
+// the host arg so they can override these defaults).
 func (r *runner) baseArgs(host string) []string {
 	args := []string{
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=15",
-	}
-	if khPath := r.knownHostsPath(); khPath != "" {
-		args = append(args,
-			"-o", "UserKnownHostsFile="+khPath,
-			"-o", "StrictHostKeyChecking=accept-new",
-		)
+		"-o", "StrictHostKeyChecking=accept-new",
 	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, host)
 	return args
-}
-
-// knownHostsPath returns the path used for the moorpost-private
-// known_hosts file. Empty string disables the override (used by tests
-// that pass ExtraArgs explicitly).
-func (r *runner) knownHostsPath() string {
-	if r.SSHBinary != "" {
-		// SSHBinary override implies a test/custom configuration; let
-		// callers control known_hosts via ExtraArgs.
-		return ""
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return home + "/.moorpost/known_hosts"
 }
 
 func (r *runner) Run(ctx context.Context, host, cmd string) ([]byte, []byte, int, error) {

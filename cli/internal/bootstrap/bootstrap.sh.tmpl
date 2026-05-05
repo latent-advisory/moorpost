@@ -131,12 +131,18 @@ fi
 # --------------------------------------------------------------------------
 # 6. /etc/moorpost/env (skeleton; populated later by `moorpost handoff`)
 # --------------------------------------------------------------------------
+# Owned by the remote user so `moorpost handoff` can write the env file
+# without sudo. Mode 0700 on the dir so other users can't read the
+# credential file even if 0600 on the file is somehow lost.
 echo "[moorpost] step 6: /etc/moorpost/env skeleton"
 mkdir -p /etc/moorpost
+chown -R "{{.RemoteUser}}:{{.RemoteUser}}" /etc/moorpost
+chmod 0700 /etc/moorpost
 if [ ! -f /etc/moorpost/env ]; then
     : > /etc/moorpost/env
 fi
 chmod 0600 /etc/moorpost/env
+chown "{{.RemoteUser}}:{{.RemoteUser}}" /etc/moorpost/env
 
 {{.IdleMonitorInstall}}
 # --------------------------------------------------------------------------

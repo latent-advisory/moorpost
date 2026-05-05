@@ -13,6 +13,7 @@ import (
 	"github.com/latent-advisory/moorpost/cli/internal/agent"
 	mpexec "github.com/latent-advisory/moorpost/cli/internal/exec"
 	"github.com/latent-advisory/moorpost/cli/internal/keychain"
+	mpssh "github.com/latent-advisory/moorpost/cli/internal/ssh"
 	"github.com/latent-advisory/moorpost/cli/internal/tmux"
 )
 
@@ -329,6 +330,10 @@ func (r *fakeSSHRunner) WriteRemoteFile(_ context.Context, host, path string, co
 	return r.err
 }
 
+// WithIdentity is a no-op for the fake — tests don't exercise the
+// identity-file path; they assert on the host string only.
+func (r *fakeSSHRunner) WithIdentity(string) mpssh.Runner { return r }
+
 func newAgentWithTmux(t *testing.T, tx tmux.Tmux, ssh *fakeSSHRunner) *claudeCode {
 	t.Helper()
 	kc, err := keychain.NewFile(t.TempDir())
@@ -341,7 +346,7 @@ func newAgentWithTmux(t *testing.T, tx tmux.Tmux, ssh *fakeSSHRunner) *claudeCod
 		Keychain:  kc,
 		SSHRunner: ssh,
 		HomeDir:   t.TempDir(),
-		TmuxFactory: func(string) tmux.Tmux {
+		TmuxFactory: func(string, string) tmux.Tmux {
 			return tx
 		},
 		PausePollInterval: 5 * time.Millisecond,
@@ -541,7 +546,7 @@ func TestPauseReadyRegexCustomizable(t *testing.T) {
 		Keychain:         kc,
 		SSHRunner:        &fakeSSHRunner{},
 		HomeDir:          t.TempDir(),
-		TmuxFactory:      func(string) tmux.Tmux { return tx },
+		TmuxFactory:      func(string, string) tmux.Tmux { return tx },
 		ReadyPromptRegex: customRE,
 		PausePollInterval: time.Millisecond,
 	})

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -413,7 +414,15 @@ func (e *engine) SSHTarget(ctx context.Context, vmID string) (provider.SSHTarget
 	if user == "" {
 		user = "moorpost"
 	}
-	return provider.SSHTarget{Host: ip, Port: 22, User: user}, nil
+	// GCP's gcloud convention installs SSH keys at ~/.ssh/google_compute_engine
+	// (matching what `moorpost provision` reads as the .pub default). Hand the
+	// matching private key to ssh callers so they don't fall back to ssh-agent
+	// or default identities (which won't have the GCE key loaded).
+	identity := ""
+	if home, err := os.UserHomeDir(); err == nil {
+		identity = filepath.Join(home, ".ssh", "google_compute_engine")
+	}
+	return provider.SSHTarget{Host: ip, Port: 22, User: user, IdentityFile: identity}, nil
 }
 
 // snapshotLabelRE filters chars not allowed in GCE snapshot names. Names must
