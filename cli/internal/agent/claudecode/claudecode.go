@@ -304,6 +304,18 @@ func parseOAuthToken(out string) (string, error) {
 	return strings.TrimSpace(m[1]), nil
 }
 
+// sshHostFor renders an SSHTarget into the user@host string the ssh.Runner
+// expects. Without the User prefix, ssh defaults to the local OS user —
+// which fails on GCE VMs whose SSH key is bound to a specific provisioned
+// user (e.g. "moorpost"). Falls back to bare host when no user is set, to
+// preserve callers that intentionally rely on the local user.
+func sshHostFor(target agent.SSHTarget) string {
+	if target.User == "" {
+		return target.Host
+	}
+	return target.User + "@" + target.Host
+}
+
 // InjectCredential writes the credential to the remote VM's env file
 // (mode 0600). The remote bootstrap script's systemd unit and tmux session
 // load this file at agent startup.
@@ -323,7 +335,7 @@ func (c *claudeCode) InjectCredential(ctx context.Context, target agent.SSHTarge
 	}
 	// Single-quoted shell value so any other special chars are inert.
 	content := []byte(envVar + "='" + cred.Value + "'\n")
-	if err := c.ssh.WriteRemoteFile(ctx, target.Host, c.remoteEnvPath, content, 0o600); err != nil {
+	if err := c.ssh.WriteRemoteFile(ctx, sshHostFor(target), c.remoteEnvPath, content, 0o600); err != nil {
 		return fmt.Errorf("claudecode.InjectCredential: %w", err)
 	}
 	return nil
@@ -343,7 +355,7 @@ func (c *claudeCode) Resume(ctx context.Context, target agent.SSHTarget, ref age
 	if ref.ProjectSlug == "" {
 		return errors.New("claudecode.Resume: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(target.Host)
+	tx := c.tmuxFactory(sshHostFor(target))
 	exists, err := tx.HasSession(ctx, ref.ProjectSlug)
 	if err != nil {
 		return fmt.Errorf("claudecode.Resume: %w", err)
@@ -379,7 +391,7 @@ func (c *claudeCode) IsActive(ctx context.Context, target agent.SSHTarget, ref a
 	if ref.ProjectSlug == "" {
 		return false, errors.New("claudecode.IsActive: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(target.Host)
+	tx := c.tmuxFactory(sshHostFor(target))
 	return tx.HasSession(ctx, ref.ProjectSlug)
 }
 
@@ -395,7 +407,7 @@ func (c *claudeCode) Pause(ctx context.Context, target agent.SSHTarget, ref agen
 	if ref.ProjectSlug == "" {
 		return errors.New("claudecode.Pause: requires a non-empty ProjectSlug")
 	}
-	tx := c.tmuxFactory(target.Host)
+	tx := c.tmuxFactory(sshHostFor(target))
 	exists, err := tx.HasSession(ctx, ref.ProjectSlug)
 	if err != nil {
 		return fmt.Errorf("claudecode.Pause: %w", err)
