@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -243,11 +244,23 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		return fmt.Errorf("handoff: start sync session: %w", err)
 	}
 
-	// Resume the agent on the remote.
+	// Resume the agent on the remote. If state.json doesn't have a
+	// recorded session id (first handoff, or user manages sessions
+	// outside moorpost), fall back to the most-recently-modified
+	// session JSONL in ~/.claude/projects/<encoded>/. That handles the
+	// common "user has been chatting in claude, hits handoff for the
+	// first time" path without requiring an explicit session-pick UI.
+	sessionID := ps.AgentSessionID
+	if sessionID == "" && localState != "" {
+		if id := mostRecentSession(localState); id != "" {
+			fmt.Fprintf(out, "  (auto-selected most recent session %s)\n", id)
+			sessionID = id
+		}
+	}
 	ref := agent.SessionRef{
 		ProjectSlug:   c.Config.ProjectSlug,
 		ProjectAbsDir: c.ProjectDir,
-		SessionID:     ps.AgentSessionID,
+		SessionID:     sessionID,
 	}
 	fmt.Fprintf(out, "Resuming claude on remote (slug=%s)...\n", ref.ProjectSlug)
 	if err := c.Agent.Resume(ctx, agentTarget, ref); err != nil {
@@ -309,6 +322,35 @@ func waitForIP(ctx context.Context, p provider.Provider, vmID string, timeout ti
 			}
 		}
 	}
+}
+
+// mostRecentSession scans dir for *.jsonl files and returns the session ID
+// (filename without extension) of the most recently modified one. Returns
+// "" if the dir doesn't exist, isn't readable, or has no .jsonl files.
+// Used to disambiguate when state.json's AgentSessionID isn't set — the
+// active session in the current terminal almost always has the most
+// recent mtime.
+func mostRecentSession(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var bestName string
+	var bestMtime time.Time
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(bestMtime) {
+			bestMtime = info.ModTime()
+			bestName = strings.TrimSuffix(e.Name(), ".jsonl")
+		}
+	}
+	return bestName
 }
 
 // ensureRemoteDir runs `mkdir -p` over SSH to make sure the remote path

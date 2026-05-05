@@ -104,22 +104,51 @@ for arg in "$@"; do
 done
 shift "$skip" 2>/dev/null || true
 
+ssh_opts=(
+  -i "$HOME/.ssh/google_compute_engine"
+  -o BatchMode=yes
+  -o ConnectTimeout=15
+  -o StrictHostKeyChecking=accept-new
+)
+
+# Plugin-mode tempdir sync: when the Anthropic Claude Code plugin spawns
+# claude, it sets CLAUDE_CONFIG_DIR to a per-conversation tempdir holding
+# the resumable session JSONL. Without staging this on remote, remote
+# claude's `-r <sid>` finds nothing → conversation appears fresh in the
+# panel after handoff. Sync the dir to a stable remote path so remote
+# claude resumes correctly. The remote path is keyed off the local one
+# so subsequent invocations against the same tempdir reuse the same
+# remote dir (rsync incremental, fast).
+remote_config_dir=""
+if [[ -n "${CLAUDE_CONFIG_DIR:-}" ]] && [[ -d "$CLAUDE_CONFIG_DIR" ]]; then
+  config_hash=$(printf '%s' "$CLAUDE_CONFIG_DIR" | shasum -a 256 | cut -c1-16)
+  remote_config_dir="/home/moorpost/.moorpost/plugin-config/$config_hash"
+  if ! rsync -a --delete \
+      -e "ssh ${ssh_opts[*]}" \
+      "${CLAUDE_CONFIG_DIR}/" "moorpost@${vm_ip}:${remote_config_dir}/" \
+      2>/dev/null; then
+    # rsync may fail if remote path doesn't exist yet — create and retry.
+    ssh "${ssh_opts[@]}" "moorpost@${vm_ip}" -- \
+      "mkdir -p $(printf '%q' "$remote_config_dir")" 2>/dev/null || true
+    rsync -a --delete \
+      -e "ssh ${ssh_opts[*]}" \
+      "${CLAUDE_CONFIG_DIR}/" "moorpost@${vm_ip}:${remote_config_dir}/" \
+      >&2 || remote_config_dir=""
+  fi
+fi
+
 # Compose the remote command. The bootstrap script's abs-path symlink
 # means $PWD on the local machine resolves to a valid path on the
 # remote (via /Users/.../ → /home/moorpost/moorpost/<slug>), so we can
 # pass the literal local cwd as the remote cd target.
-remote_cmd="cd $(printf '%q' "$PWD") && exec claude"
+remote_cmd="cd $(printf '%q' "$PWD") && "
+if [[ -n "$remote_config_dir" ]]; then
+  remote_cmd+="export CLAUDE_CONFIG_DIR=$(printf '%q' "$remote_config_dir") && "
+fi
+remote_cmd+="exec claude"
 for arg in "$@"; do
   remote_cmd+=" $(printf '%q' "$arg")"
 done
 
 # -t allocates a pty for interactive claude (required for ink-style TUI).
-# StrictHostKeyChecking=accept-new matches the rest of moorpost's ssh
-# policy. The identity file matches GCP's gcloud convention.
-exec ssh \
-  -i "$HOME/.ssh/google_compute_engine" \
-  -o BatchMode=yes \
-  -o ConnectTimeout=15 \
-  -o StrictHostKeyChecking=accept-new \
-  -t \
-  "moorpost@${vm_ip}" -- "$remote_cmd"
+exec ssh "${ssh_opts[@]}" -t "moorpost@${vm_ip}" -- "$remote_cmd"
