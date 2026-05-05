@@ -15,6 +15,7 @@ import (
 	"github.com/latent-advisory/moorpost/cli/internal/bootstrap"
 	"github.com/latent-advisory/moorpost/cli/internal/config"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
+	"github.com/latent-advisory/moorpost/cli/internal/sshconfig"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -188,9 +189,24 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 	}
 
 	// A fresh VM has a fresh host key. If we ever provisioned at this IP
-	// before, our private known_hosts file holds a stale entry that would
-	// fail later SSH calls with "Host key verification failed". Clear it.
+	// before, ~/.ssh/known_hosts holds a stale entry that would fail
+	// later SSH calls with "Host key verification failed". Clear it.
 	clearStaleKnownHostsEntry(out, vm.ExternalIP)
+
+	// Write a moorpost-managed ssh-config block for this VM so any ssh
+	// invocation against vm.ExternalIP (ours, rsync's, mutagen's) picks
+	// up User=moorpost + IdentityFile=~/.ssh/google_compute_engine
+	// without the user having to ssh-add or hand-edit ~/.ssh/config.
+	if home, err := os.UserHomeDir(); err == nil && vm.ExternalIP != "" {
+		if err := sshconfig.EnsureHost(sshconfig.HostBlock{
+			Host:         vm.ExternalIP,
+			User:         remoteUser,
+			IdentityFile: filepath.Join(home, ".ssh", "google_compute_engine"),
+			Port:         22,
+		}); err != nil {
+			fmt.Fprintf(out, "  (note: could not write moorpost ssh_config for %s: %v)\n", vm.ExternalIP, err)
+		}
+	}
 
 	fmt.Fprintf(out, "Done. VM %s (%s).\n", vm.ID, statusLabel(opts.Start))
 	if !opts.Start {

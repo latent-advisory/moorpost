@@ -12,6 +12,7 @@ import (
 	"github.com/latent-advisory/moorpost/cli/internal/agent"
 	"github.com/latent-advisory/moorpost/cli/internal/provider"
 	"github.com/latent-advisory/moorpost/cli/internal/session"
+	"github.com/latent-advisory/moorpost/cli/internal/sshconfig"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 	"github.com/spf13/cobra"
@@ -138,6 +139,19 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		return fmt.Errorf("handoff: %w", err)
 	}
 	fmt.Fprintf(out, "VM running at %s\n", tgt.Host)
+
+	// Ephemeral GCE IPs change across stop/start cycles. Re-clear any
+	// stale ~/.ssh/known_hosts entry for the new IP and (re-)write the
+	// moorpost-managed ssh_config block so mutagen/rsync/ssh all
+	// transparently use the right user + identity for this IP.
+	clearStaleKnownHostsEntry(out, tgt.Host)
+	if tgt.IdentityFile != "" {
+		if err := sshconfig.EnsureHost(sshconfig.HostBlock{
+			Host: tgt.Host, User: tgt.User, IdentityFile: tgt.IdentityFile, Port: tgt.Port,
+		}); err != nil {
+			fmt.Fprintf(out, "  (note: could not write moorpost ssh_config for %s: %v)\n", tgt.Host, err)
+		}
+	}
 
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
 	// agent puts it).

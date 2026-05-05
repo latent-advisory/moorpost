@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/latent-advisory/moorpost/cli/internal/sshconfig"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	"github.com/spf13/cobra"
 )
@@ -64,8 +65,22 @@ func RunDestroy(ctx context.Context, out io.Writer, in io.Reader, c *Context, sk
 		}
 	}
 	fmt.Fprintf(out, "Destroying %s...\n", ps.VMID)
+	// Capture the IP BEFORE Destroy nukes the VM record so we can clean
+	// the moorpost-managed ssh_config block below.
+	var oldIP string
+	if vm, ok := c.State.VMs[ps.VMID]; ok {
+		oldIP = vm.ExternalIP
+	}
 	if err := c.Provider.Destroy(ctx, ps.VMID); err != nil {
 		return fmt.Errorf("destroy: %w", err)
+	}
+	// Best-effort cleanup of the per-VM ssh-config block we added at
+	// provision time. Failures are non-fatal — a stale block is harmless,
+	// will be overwritten on the next provision at the same IP.
+	if oldIP != "" {
+		if err := sshconfig.RemoveHost(oldIP); err != nil {
+			fmt.Fprintf(out, "  (note: could not clean ssh_config block for %s: %v)\n", oldIP, err)
+		}
 	}
 	// Remove the project + VM records from state.
 	err := state.WithLock(c.StatePath, func(s *state.State) error {
