@@ -157,10 +157,34 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		return fmt.Errorf("provision: %w", err)
 	}
 
-	fmt.Fprintf(out, "Provisioning %s in %s...\n", spec.Name, spec.Zone)
-	vm, err := c.Provider.Provision(ctx, spec)
-	if err != nil {
-		return fmt.Errorf("provision: %w", err)
+	// Idempotency: if a VM already exists with this name, treat it as
+	// "already provisioned" and re-resolve its identity into our state.
+	// This is the path users hit when they re-run bootstrap or provision
+	// after an earlier run was interrupted, leaving the VM in GCP but
+	// state.json possibly out of sync.
+	var vm provider.VM
+	existingState, exErr := c.Provider.Status(ctx, spec.Name)
+	if exErr == nil && existingState != provider.VMStateUnknown {
+		fmt.Fprintf(out, "VM %s already exists (state=%s) — reusing.\n", spec.Name, existingState)
+		tgt, tgtErr := c.Provider.SSHTarget(ctx, spec.Name)
+		ip := ""
+		if tgtErr == nil {
+			ip = tgt.Host
+		}
+		vm = provider.VM{
+			ID:         spec.Name,
+			Name:       spec.Name,
+			Provider:   c.Provider.ID(),
+			Zone:       spec.Zone,
+			ExternalIP: ip,
+		}
+	} else {
+		fmt.Fprintf(out, "Provisioning %s in %s...\n", spec.Name, spec.Zone)
+		v, err := c.Provider.Provision(ctx, spec)
+		if err != nil {
+			return fmt.Errorf("provision: %w", err)
+		}
+		vm = v
 	}
 
 	// Persist the project + VM record under lock.

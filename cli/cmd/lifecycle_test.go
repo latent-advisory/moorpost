@@ -74,7 +74,12 @@ func (f *fakeProvider) Status(_ context.Context, vmID string) (provider.VMState,
 	if f.statusReturn != "" {
 		return f.statusReturn, nil
 	}
-	return provider.VMStateRunning, nil
+	// Default models a "VM doesn't exist yet" GCP state. Tests that want
+	// an existing VM (e.g. running, stopped) must set statusReturn
+	// explicitly. Was VMStateRunning, which gave provision idempotency
+	// the wrong signal — provision would skip its create call thinking
+	// the VM already existed.
+	return provider.VMStateUnknown, nil
 }
 func (f *fakeProvider) Snapshot(_ context.Context, _ string, _ string) (provider.SnapshotID, error) {
 	return "", nil
