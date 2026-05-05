@@ -13,6 +13,7 @@ type fakeAgent struct{ id string }
 func (f *fakeAgent) ID() string                                   { return f.id }
 func (f *fakeAgent) InstallScript(OSFamily) string                { return ":" }
 func (f *fakeAgent) AuthenticateLocal(context.Context) (Credential, error) { return Credential{}, nil }
+func (f *fakeAgent) LoadCachedCredential() (Credential, error)              { return Credential{}, nil }
 func (f *fakeAgent) InjectCredential(context.Context, SSHTarget, Credential) error { return nil }
 func (f *fakeAgent) SessionStatePath(string) string               { return "" }
 func (f *fakeAgent) Pause(context.Context, SSHTarget, SessionRef) error { return nil }

@@ -219,19 +219,50 @@ func (c *claudeCode) SessionStatePath(projectAbsDir string) string {
 	return filepath.Join(c.home, ".claude", "projects", EncodeSessionPath(projectAbsDir))
 }
 
+// LoadCachedCredential returns the cached credential without triggering an
+// OAuth flow. Returns ErrNotAuthenticated when no token is cached. Use this
+// in passive code paths (handoff preflight, status reports) where the user
+// hasn't asked for an interactive auth flow.
+func (c *claudeCode) LoadCachedCredential() (agent.Credential, error) {
+	existing, err := c.kc.Retrieve(KeychainService, KeychainAccount)
+	if err != nil {
+		if errors.Is(err, keychain.ErrNotFound) {
+			return agent.Credential{}, agent.ErrNotAuthenticated
+		}
+		return agent.Credential{}, fmt.Errorf("claudecode: keychain retrieve: %w", err)
+	}
+	return agent.Credential{
+		EnvVar: CredentialEnvVar,
+		Value:  string(existing),
+		Kind:   "oauth-subscription",
+	}, nil
+}
+
 // AuthenticateLocal runs `claude setup-token` on the local machine, parses
 // the printed long-lived OAuth token, and stashes it in the keychain. If a
 // token is already cached, returns it without re-running setup-token.
+//
+// If ANTHROPIC_API_KEY is set in the environment, prefer that (no OAuth
+// browser flow, no parsing) — useful for CI or when the OAuth-token
+// regex fails on a newer Claude Code release.
 func (c *claudeCode) AuthenticateLocal(ctx context.Context) (agent.Credential, error) {
 	// Cache hit?
-	if existing, err := c.kc.Retrieve(KeychainService, KeychainAccount); err == nil {
+	if cred, err := c.LoadCachedCredential(); err == nil {
+		return cred, nil
+	} else if !errors.Is(err, agent.ErrNotAuthenticated) {
+		return agent.Credential{}, err
+	}
+
+	// Env-var bypass: if user set ANTHROPIC_API_KEY, store it directly.
+	if envToken := strings.TrimSpace(os.Getenv("ANTHROPIC_API_KEY")); envToken != "" {
+		if err := c.kc.Store(KeychainService, KeychainAccount, []byte(envToken)); err != nil {
+			return agent.Credential{}, fmt.Errorf("claudecode: keychain store: %w", err)
+		}
 		return agent.Credential{
 			EnvVar: CredentialEnvVar,
-			Value:  string(existing),
-			Kind:   "oauth-subscription",
+			Value:  envToken,
+			Kind:   "api-key",
 		}, nil
-	} else if !errors.Is(err, keychain.ErrNotFound) {
-		return agent.Credential{}, fmt.Errorf("claudecode: keychain retrieve: %w", err)
 	}
 
 	if _, err := c.exec.LookPath("claude"); err != nil {
@@ -247,7 +278,7 @@ func (c *claudeCode) AuthenticateLocal(ctx context.Context) (agent.Credential, e
 	}
 	token, err := parseOAuthToken(string(stdout))
 	if err != nil {
-		return agent.Credential{}, err
+		return agent.Credential{}, fmt.Errorf("%w (the OAuth completed in the browser but the token wasn't visible to moorpost — your Claude Code may store it in its own keychain entry; workaround: re-run `moorpost auth --token <paste>` or set ANTHROPIC_API_KEY and re-run)", err)
 	}
 	if err := c.kc.Store(KeychainService, KeychainAccount, []byte(token)); err != nil {
 		return agent.Credential{}, fmt.Errorf("claudecode: keychain store: %w", err)
@@ -259,10 +290,11 @@ func (c *claudeCode) AuthenticateLocal(ctx context.Context) (agent.Credential, e
 	}, nil
 }
 
-// tokenRE matches the long-lived OAuth token format that `claude setup-token`
-// prints. The token is printed on its own line, possibly preceded by other
-// log noise.
-var tokenRE = regexp.MustCompile(`(sk-ant-oat01-[A-Za-z0-9_\-]+)`)
+// tokenRE matches the long-lived OAuth token (sk-ant-oat01-*) or the API
+// key format (sk-ant-api03-*) that `claude setup-token` may print. Kept
+// permissive on the prefix segment so future Claude Code releases that
+// change the sub-prefix don't silently fail our parser.
+var tokenRE = regexp.MustCompile(`(sk-ant-[a-z0-9]+-[A-Za-z0-9_\-]+)`)
 
 func parseOAuthToken(out string) (string, error) {
 	m := tokenRE.FindStringSubmatch(out)

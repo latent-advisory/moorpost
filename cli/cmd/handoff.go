@@ -111,13 +111,14 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		}
 	}
 
-	// Pre-flight credential check BEFORE starting the VM. AuthenticateLocal
-	// hits the keychain cache; if no token is found the agent surfaces a
-	// clear "not authenticated" error here, before we spend any time/money
-	// spinning up a VM that we couldn't use anyway.
-	cred, err := c.Agent.AuthenticateLocal(ctx)
+	// Pre-flight credential check BEFORE starting the VM. Use the passive
+	// LoadCachedCredential to avoid triggering an OAuth browser flow from
+	// inside handoff (which surprised users who clicked the status bar
+	// expecting handoff but got setup-token). If no token is cached, fail
+	// fast with a clear hint.
+	cred, err := c.Agent.LoadCachedCredential()
 	if err != nil {
-		return fmt.Errorf("handoff: load credential (run `moorpost auth` first?): %w", err)
+		return fmt.Errorf("handoff: %w (run `moorpost auth` first)", err)
 	}
 
 	// Cost cap.

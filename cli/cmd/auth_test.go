@@ -22,6 +22,9 @@ func (f *fakeAuthAgent) InstallScript(agent.OSFamily) string       { return ":" 
 func (f *fakeAuthAgent) AuthenticateLocal(context.Context) (agent.Credential, error) {
 	return f.cred, f.err
 }
+func (f *fakeAuthAgent) LoadCachedCredential() (agent.Credential, error) {
+	return f.cred, f.err
+}
 func (f *fakeAuthAgent) InjectCredential(context.Context, agent.SSHTarget, agent.Credential) error {
 	return nil
 }

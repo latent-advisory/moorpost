@@ -40,6 +40,9 @@ func (stubAgent) InstallScript(agent.OSFamily) string                     { retu
 func (stubAgent) AuthenticateLocal(context.Context) (agent.Credential, error) {
 	return agent.Credential{}, nil
 }
+func (stubAgent) LoadCachedCredential() (agent.Credential, error) {
+	return agent.Credential{}, nil
+}
 func (stubAgent) InjectCredential(context.Context, agent.SSHTarget, agent.Credential) error {
 	return nil
 }

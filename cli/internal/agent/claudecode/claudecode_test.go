@@ -229,9 +229,11 @@ func TestParseOAuthTokenStripsWhitespace(t *testing.T) {
 }
 
 func TestParseOAuthTokenPicksFirstValid(t *testing.T) {
-	// Multiple sk-ant- candidates: parser returns the first OAuth-format match.
-	// (sk-ant-api01- API keys exist too; we want only sk-ant-oat01-.)
-	out := "sk-ant-api03-not-oauth\nsk-ant-oat01-real-token\nmore-noise"
+	// The regex matches any sk-ant-<subprefix>-<body> token (oat01, api03,
+	// future variants). Multiple tokens in one output: parser returns the
+	// first match in stream order. Real `claude setup-token` only ever
+	// prints one; this case is purely defensive.
+	out := "noise\nsk-ant-oat01-real-token\nsk-ant-api03-also-valid\nmore-noise"
 	tok, err := parseOAuthToken(out)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

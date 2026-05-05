@@ -72,6 +72,12 @@ type Agent interface {
 	// May open a browser. May prompt the user. Should not write to disk.
 	AuthenticateLocal(ctx context.Context) (Credential, error)
 
+	// LoadCachedCredential is the passive read of the cached credential
+	// (typically the OS keychain). Returns ErrNotAuthenticated when no
+	// credential is cached. Use this in handoff preflight, status reports,
+	// and other code paths that should NOT trigger an interactive auth flow.
+	LoadCachedCredential() (Credential, error)
+
 	// InjectCredential places the credential where the remote agent reads it
 	// (typically a 0600 env file consumed by a systemd unit or tmux session).
 	InjectCredential(ctx context.Context, target SSHTarget, c Credential) error
@@ -103,6 +109,11 @@ var ErrAgentNotInstalled = errors.New("agent not installed on remote")
 // ErrAuthRequired indicates the agent has no credential cached and cannot
 // run on the remote. The CLI should prompt for `moorpost auth`.
 var ErrAuthRequired = errors.New("agent credential required")
+
+// ErrNotAuthenticated indicates LoadCachedCredential found no cached
+// credential. Callers (status, handoff preflight) should hint the user
+// toward `moorpost auth` rather than silently triggering an OAuth flow.
+var ErrNotAuthenticated = errors.New("agent not authenticated (run `moorpost auth`)")
 
 // Constructor builds an Agent from a config map.
 type Constructor func(config map[string]any) (Agent, error)

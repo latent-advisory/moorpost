@@ -3,9 +3,11 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/latent-advisory/moorpost/cli/internal/agent"
 	"github.com/latent-advisory/moorpost/cli/internal/agent/claudecode"
+	"github.com/latent-advisory/moorpost/cli/internal/keychain"
 	"github.com/spf13/cobra"
 )
 
@@ -13,6 +15,8 @@ import (
 // is per-machine (token is cached in the OS keychain), so it must work before
 // `moorpost init` — which is the order the quickstart and walkthrough teach.
 const defaultAgentID = claudecode.AgentID
+
+var authFlagToken string
 
 var authCmd = &cobra.Command{
 	Use:   "auth",
@@ -23,8 +27,26 @@ and forwarded to remote VMs at provision/handoff time.
 
 Runs project-aware when invoked inside a project (uses the configured agent),
 otherwise falls back to the default agent (` + defaultAgentID + `) so first-run
-machines can authenticate before initializing a project.`,
+machines can authenticate before initializing a project.
+
+If --token is supplied, store it directly without running the agent's auth
+flow. Useful when the OAuth-token regex doesn't match a newer Claude Code
+release, or when scripting in CI. Setting the ANTHROPIC_API_KEY env var
+has the same effect.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		// --token bypass: just stash whatever the user pasted.
+		if t := strings.TrimSpace(authFlagToken); t != "" {
+			kc, err := keychain.New()
+			if err != nil {
+				return fmt.Errorf("auth: keychain: %w", err)
+			}
+			if err := kc.Store(claudecode.KeychainService, claudecode.KeychainAccount, []byte(t)); err != nil {
+				return fmt.Errorf("auth: keychain store: %w", err)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Stored token in keychain (%d chars). No OAuth flow needed.\n", len(t))
+			return nil
+		}
+
 		c, err := loadProjectContext(ContextOptions{
 			RequireConfig: false,
 			Stdout:        cmd.OutOrStdout(),
@@ -46,6 +68,7 @@ machines can authenticate before initializing a project.`,
 }
 
 func init() {
+	authCmd.Flags().StringVar(&authFlagToken, "token", "", "store this token directly in the keychain (skip the OAuth flow)")
 	rootCmd.AddCommand(authCmd)
 }
 

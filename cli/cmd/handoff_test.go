@@ -33,6 +33,9 @@ func (f *cmdFakeAgent) InstallScript(agent.OSFamily) string { return "" }
 func (f *cmdFakeAgent) AuthenticateLocal(context.Context) (agent.Credential, error) {
 	return f.authResult, f.authErr
 }
+func (f *cmdFakeAgent) LoadCachedCredential() (agent.Credential, error) {
+	return f.authResult, f.authErr
+}
 func (f *cmdFakeAgent) InjectCredential(_ context.Context, _ agent.SSHTarget, c agent.Credential) error {
 	f.injectCalls = append(f.injectCalls, c)
 	return nil
