@@ -91,7 +91,12 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	if cached := authCached(); cached {
 		fmt.Fprintln(out, "\n→ auth: already authenticated (token in OS keychain) — skipping")
 	} else {
-		if err := stepShell(out, "auth"); err != nil {
+		// Note: stepShell takes (label, args...). The first arg after the
+		// label is the CLI subcommand — easy to forget. Earlier this was
+		// `stepShell(out, "auth")` which silently ran `moorpost` (no args
+		// → help screen → exit 0), making auth look successful while the
+		// keychain stayed empty.
+		if err := stepShell(out, "auth", "auth"); err != nil {
 			return fmt.Errorf("bootstrap: auth failed: %w", err)
 		}
 	}
