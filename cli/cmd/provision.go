@@ -36,19 +36,25 @@ project simply re-confirms the recorded VM id.`,
 		if err != nil {
 			return err
 		}
-		// --wait implies --start: we can only SSH into a running VM. Surface
-		// the implication to the user instead of silently flipping a flag.
+		// --wait needs the VM running to SSH and verify bootstrap. Auto-
+		// flip --start if not set, but remember it was implicit so we
+		// can stop the VM again after the wait check completes (the
+		// user didn't actually ask to keep it running, and local-first
+		// mode wants it stopped between handoffs).
 		start := provisionFlagStart
-		if provisionFlagWait && !start {
+		stopAfterWait := false
+		if provisionFlagWait && !provisionFlagStart {
 			start = true
-			fmt.Fprintln(cmd.OutOrStdout(), "Note: --wait implies --start (the VM must be running to be SSHed for readiness check).")
+			stopAfterWait = true
+			fmt.Fprintln(cmd.OutOrStdout(), "Note: --wait will start the VM, verify bootstrap, then stop it again. Pass --start to keep it running.")
 		}
 		opts := ProvisionOptions{
-			SSHKeyPath:  provisionFlagSSHKey,
-			Start:       start,
-			Tags:        provisionFlagTags,
-			OverrideCap: provisionFlagOverrideCap,
-			Wait:        provisionFlagWait,
+			SSHKeyPath:    provisionFlagSSHKey,
+			Start:         start,
+			Tags:          provisionFlagTags,
+			OverrideCap:   provisionFlagOverrideCap,
+			Wait:          provisionFlagWait,
+			StopAfterWait: stopAfterWait,
 		}
 		return RunProvision(cmd.Context(), cmd.OutOrStdout(), c, opts)
 	},
@@ -78,6 +84,12 @@ type ProvisionOptions struct {
 	Tags        []string // extra tags
 	OverrideCap bool     // bypass cost.monthly_cap_usd check
 	Wait        bool     // SSH-poll for bootstrap completion before returning
+	// StopAfterWait stops the VM once the Wait check has succeeded.
+	// Set automatically by the cobra layer when --wait is passed without
+	// --start: the user wanted "verify the VM is ready," not "leave it
+	// burning $0.067/hr." Local-first mode hinges on this — without it,
+	// `moorpost bootstrap --provision` would leave the VM running.
+	StopAfterWait bool
 }
 
 // RunProvision is the testable provision entrypoint.
@@ -241,6 +253,19 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		gcpProject, _ := gcpCfg["project"].(string)
 		if err := waitForBootstrapReady(ctx, out, gcpProject, vm); err != nil {
 			return err
+		}
+		if opts.StopAfterWait {
+			fmt.Fprintf(out, "Stopping %s (--wait done; local-first default)...\n", vm.ID)
+			if err := c.Provider.Stop(ctx, vm.ID); err != nil {
+				return fmt.Errorf("provision: stop after wait: %w", err)
+			}
+			if err := withVM(c, vm.ID, func(rec *state.VMRecord) error {
+				rec.StateCache = "stopped"
+				return nil
+			}); err != nil {
+				return err
+			}
+			fmt.Fprintln(out, "VM stopped. Run `moorpost handoff` when stepping away.")
 		}
 	}
 	return nil
