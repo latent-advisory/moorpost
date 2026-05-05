@@ -4,8 +4,9 @@
 import * as vscode from 'vscode';
 import { runInTerminal, getStatus, workspaceRoot } from '../cli';
 import type { MoorpostTreeProvider } from '../treeView';
-import { bootstrapProject, getStarted, initProject } from './getStarted';
+import { bootstrapProject, initProject } from './getStarted';
 import { editConfig, toggleSide } from './extras';
+import { runCliInOutput } from '../output';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -22,14 +23,19 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand('moorpost.bootstrap', bootstrapProject),
 
-    vscode.commands.registerCommand('moorpost.getStarted', getStarted),
-
     vscode.commands.registerCommand('moorpost.runSetup', async () => {
-      runInTerminal(['setup']);
+      await runCliInOutput(['setup', '--yes'], {
+        title: 'Installing prerequisites',
+        reveal: 'always',
+      });
     }),
 
     vscode.commands.registerCommand('moorpost.runDoctor', async () => {
-      runInTerminal(['doctor'], workspaceRoot());
+      await runCliInOutput(['doctor'], {
+        cwd: workspaceRoot(),
+        title: 'Running diagnostics',
+        reveal: 'always',
+      });
     }),
 
     vscode.commands.registerCommand('moorpost.initProject', initProject),
@@ -99,7 +105,11 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
-      runInTerminal(['conflicts'], cwd);
+      await runCliInOutput(['conflicts'], {
+        cwd,
+        title: 'Listing sync conflicts',
+        reveal: 'always',
+      });
     }),
 
     vscode.commands.registerCommand('moorpost.attach', async () => {
@@ -133,7 +143,11 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
-      runInTerminal(['cost', '--explain'], cwd);
+      await runCliInOutput(['cost', '--explain'], {
+        cwd,
+        title: 'Computing cost details',
+        reveal: 'always',
+      });
     }),
 
     vscode.commands.registerCommand('moorpost.editConfig', editConfig),

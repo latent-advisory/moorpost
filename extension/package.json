@@ -37,11 +37,6 @@
         "category": "Moorpost"
       },
       {
-        "command": "moorpost.getStarted",
-        "title": "Moorpost: Get started",
-        "category": "Moorpost"
-      },
-      {
         "command": "moorpost.runSetup",
         "title": "Moorpost: Install prerequisites (setup)",
         "category": "Moorpost"
@@ -139,7 +134,7 @@
     "viewsWelcome": [
       {
         "view": "moorpost.projectTree",
-        "contents": "No Moorpost project here yet.\n\nMoorpost lets you hand off Claude Code sessions between your laptop and a remote VM.\n\n[Bootstrap (one-shot)](command:moorpost.bootstrap)\n\nRuns prereqs, sign-in, and project init in one command.\n\n[Step-by-step instead](command:moorpost.getStarted)"
+        "contents": "No Moorpost project here yet.\n\nMoorpost lets you hand off Claude Code sessions between your laptop and a remote VM.\n\n[Bootstrap (one-shot)](command:moorpost.bootstrap)\n\nRuns prereqs, sign-in, and project init in one command. The walkthrough (auto-shown on install) covers the same steps with per-step explanations."
       }
     ],
     "walkthroughs": [

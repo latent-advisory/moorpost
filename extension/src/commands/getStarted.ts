@@ -1,93 +1,11 @@
-// Get-started orchestration. The walkthrough (declared in package.json)
-// covers each step independently; this command runs an inline QuickPick wizard
-// for users who'd rather drive from the command palette.
-//
-// Each branch shells the existing CLI; we never duplicate setup logic in TS.
+// Top-level flows used by the Bootstrap command and the walkthrough buttons.
+// Onboarding has two paths: the native VSCode walkthrough (declared in
+// package.json with explanatory media) and the one-shot Bootstrap command
+// here. The earlier QuickPick "Get started" wizard was removed in v1.0 —
+// it duplicated both paths without adding value.
 
 import * as vscode from 'vscode';
-import { runInTerminal, workspaceRoot } from '../cli';
-
-interface Step {
-  label: string;
-  description: string;
-  detail: string;
-  run: () => Promise<void>;
-}
-
-export async function getStarted(): Promise<void> {
-  const steps: Step[] = [
-    {
-      label: '$(rocket) 0. Bootstrap (one-shot — recommended)',
-      description: 'moorpost bootstrap',
-      detail: 'Runs setup → auth → init in sequence, skipping work that\'s already done. Add --provision to also create the VM.',
-      run: bootstrapProject,
-    },
-    {
-      label: '$(tools) 1. Install prerequisites',
-      description: 'moorpost setup',
-      detail: 'Detects gcloud / mutagen / tmux / claude on PATH and prompts to install missing tools.',
-      run: async () => {
-        runInTerminal(['setup']);
-      },
-    },
-    {
-      label: '$(stethoscope) 2. Run diagnostics',
-      description: 'moorpost doctor',
-      detail: 'Verifies prereqs, keychain access, and (in a project) the GCP preflight.',
-      run: async () => {
-        runInTerminal(['doctor']);
-      },
-    },
-    {
-      label: '$(key) 3. Sign in to Claude',
-      description: 'moorpost auth',
-      detail: 'OAuth flow to claude.ai; token cached in your OS keychain.',
-      run: async () => {
-        runInTerminal(['auth']);
-      },
-    },
-    {
-      label: '$(folder-opened) 4. Initialize a project',
-      description: 'moorpost init (you pick the folder)',
-      detail: 'Writes .moorpost/config.yaml in the workspace folder you choose.',
-      run: initProject,
-    },
-    {
-      label: '$(cloud-upload) 5. Provision the VM',
-      description: 'moorpost provision',
-      detail: 'Creates the GCP VM (left stopped). One-time per project.',
-      run: async () => {
-        const cwd = workspaceRoot();
-        if (!cwd) {
-          void vscode.window.showWarningMessage('Open a workspace folder first.');
-          return;
-        }
-        runInTerminal(['provision'], cwd);
-      },
-    },
-    {
-      label: '$(book) Open the full walkthrough',
-      description: 'A guided checklist in the editor',
-      detail: 'Same steps with explanatory media; persists progress.',
-      run: async () => {
-        await vscode.commands.executeCommand(
-          'workbench.action.openWalkthrough',
-          'latent-advisory.moorpost#moorpost.gettingStarted',
-          true,
-        );
-      },
-    },
-  ];
-
-  const pick = await vscode.window.showQuickPick(steps, {
-    title: 'Moorpost — Get started',
-    placeHolder: 'Pick a step. You can re-run this command at any time.',
-    matchOnDescription: true,
-    matchOnDetail: true,
-  });
-  if (!pick) return;
-  await pick.run();
-}
+import { runInTerminal } from '../cli';
 
 /**
  * One-shot bootstrap. Asks which folder to initialize (multi-root only),
