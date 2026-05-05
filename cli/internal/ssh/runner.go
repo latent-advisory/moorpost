@@ -3,6 +3,7 @@ package ssh
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	mpexec "github.com/latent-advisory/moorpost/cli/internal/exec"
@@ -56,17 +57,49 @@ func (r *runner) sshBinary() string {
 	return "ssh"
 }
 
-// baseArgs assembles the boilerplate args used for every Run call. We force
-// BatchMode=yes so SSH never prompts; if the user's keys/agent aren't set up,
-// the call fails fast with a clear error rather than hanging forever.
+// baseArgs assembles the boilerplate args used for every Run call.
+//
+//   - BatchMode=yes: SSH never prompts; if the user's keys/agent aren't set
+//     up, the call fails fast with a clear error rather than hanging.
+//   - ConnectTimeout=15: same, fast failure on unreachable hosts.
+//   - UserKnownHostsFile + StrictHostKeyChecking=accept-new: isolates
+//     moorpost's host-key state from the user's ~/.ssh/known_hosts so
+//     re-provisioned VMs (same IP, new host key) don't get rejected as
+//     MITM attempts. accept-new still rejects a key change for a host
+//     already in OUR file — provision.go is responsible for clearing
+//     the entry when it knows the VM was recreated.
+//
+// Tests can override the known_hosts path via ExtraArgs.
 func (r *runner) baseArgs(host string) []string {
 	args := []string{
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=15",
 	}
+	if khPath := r.knownHostsPath(); khPath != "" {
+		args = append(args,
+			"-o", "UserKnownHostsFile="+khPath,
+			"-o", "StrictHostKeyChecking=accept-new",
+		)
+	}
 	args = append(args, r.ExtraArgs...)
 	args = append(args, host)
 	return args
+}
+
+// knownHostsPath returns the path used for the moorpost-private
+// known_hosts file. Empty string disables the override (used by tests
+// that pass ExtraArgs explicitly).
+func (r *runner) knownHostsPath() string {
+	if r.SSHBinary != "" {
+		// SSHBinary override implies a test/custom configuration; let
+		// callers control known_hosts via ExtraArgs.
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return home + "/.moorpost/known_hosts"
 }
 
 func (r *runner) Run(ctx context.Context, host, cmd string) ([]byte, []byte, int, error) {

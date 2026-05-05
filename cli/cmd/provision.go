@@ -187,6 +187,11 @@ func RunProvision(ctx context.Context, out io.Writer, c *Context, opts Provision
 		return err
 	}
 
+	// A fresh VM has a fresh host key. If we ever provisioned at this IP
+	// before, our private known_hosts file holds a stale entry that would
+	// fail later SSH calls with "Host key verification failed". Clear it.
+	clearStaleKnownHostsEntry(out, vm.ExternalIP)
+
 	fmt.Fprintf(out, "Done. VM %s (%s).\n", vm.ID, statusLabel(opts.Start))
 	if !opts.Start {
 		fmt.Fprintln(out, "VM is stopped. Run `moorpost handoff` when stepping away, or `moorpost up` for always-on.")
@@ -246,6 +251,32 @@ func statusLabel(running bool) string {
 		return "running"
 	}
 	return "stopped"
+}
+
+// clearStaleKnownHostsEntry removes any prior host-key entry for ip from
+// moorpost's private known_hosts file (~/.moorpost/known_hosts). Best
+// effort: silently no-ops on missing file, missing ssh-keygen, or any
+// other error — provisioning should never fail because of a known_hosts
+// cleanup quirk.
+func clearStaleKnownHostsEntry(out io.Writer, ip string) {
+	if ip == "" {
+		return
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return
+	}
+	khPath := filepath.Join(home, ".moorpost", "known_hosts")
+	if _, err := os.Stat(khPath); errors.Is(err, os.ErrNotExist) {
+		return // never used, nothing to clear
+	}
+	cmd := exec.Command("ssh-keygen", "-R", ip, "-f", khPath) // #nosec G204
+	if err := cmd.Run(); err != nil {
+		// Don't surface as an error — the worst case is a stale entry
+		// that the next SSH attempt will fail on, at which point the
+		// user can manually `ssh-keygen -R <ip> -f ~/.moorpost/known_hosts`.
+		fmt.Fprintf(out, "  (note: could not refresh ~/.moorpost/known_hosts for %s: %v)\n", ip, err)
+	}
 }
 
 // pickInt extracts an int-ish value from a config map. yaml.v3 unmarshals
