@@ -108,7 +108,7 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
       new MoorpostTreeItem('VM', vmDetail, new vscode.ThemeIcon('vm'), showStatus, 'moorpost.vm'),
     );
   }
-  if (typeof s.month_to_date_usd === 'number' && s.month_to_date_usd > 0) {
+  if (typeof s.month_to_date_usd === 'number') {
     items.push(
       new MoorpostTreeItem(
         'Cost (MTD)',

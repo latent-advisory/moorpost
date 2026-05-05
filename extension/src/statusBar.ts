@@ -73,7 +73,13 @@ async function refresh(): Promise<void> {
   const side = status.active_side ?? 'local';
   const icon = side === 'remote' ? '$(cloud)' : '$(home)';
   const vmState = status.vm_state ? ` · ${status.vm_state}` : '';
-  const cost = status.month_to_date_usd ? ` · $${status.month_to_date_usd.toFixed(2)}` : '';
+  // Show MTD cost whenever the field is present in the JSON, even when
+  // it's $0.00 — the user gets visible confirmation that cost tracking
+  // is wired up rather than an ambiguous absence.
+  const cost =
+    typeof status.month_to_date_usd === 'number'
+      ? ` · $${status.month_to_date_usd.toFixed(2)}`
+      : '';
   item.text = `${icon} Moorpost · ${side}${vmState}${cost}`;
   item.tooltip = renderTooltip(status);
 }

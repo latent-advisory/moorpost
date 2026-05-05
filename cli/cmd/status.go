@@ -43,7 +43,9 @@ type statusReport struct {
 	ActiveSide string  `json:"active_side,omitempty"`
 	VMID       string  `json:"vm_id,omitempty"`
 	VMState    string  `json:"vm_state,omitempty"`
-	MTDCostUSD float64 `json:"month_to_date_usd,omitempty"`
+	// Always emitted (even when 0) so the extension can show "$0.00"
+	// to confirm MTD tracking is live, instead of an ambiguous absence.
+	MTDCostUSD float64 `json:"month_to_date_usd"`
 	// AuthCached reports whether the configured agent has a cached
 	// credential in the OS keychain. Always emitted (true or false) so
 	// the extension can route the status-bar click to the right next
