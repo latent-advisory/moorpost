@@ -381,10 +381,14 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 		t.Fatalf("bootstrap.Render: %v", err)
 	}
 	// Sanity: ensure the idle-monitor pieces are in the rendered script.
+	// THRESHOLD/INTERVAL come from thresholdMinutes/intervalMinutes — keep
+	// the assertion derived from those constants so future changes don't
+	// drift.
 	for _, want := range []string{
 		"moorpost-idle-check.sh",
 		"moorpost-idle.timer",
-		"THRESHOLD=5",
+		fmt.Sprintf("THRESHOLD=%d", thresholdMinutes),
+		fmt.Sprintf("INTERVAL=%d", intervalMinutes),
 	} {
 		if !strings.Contains(bootScript, want) {
 			t.Fatalf("bootstrap missing %q — IdleAutoStopMinutes plumbing broken?", want)
