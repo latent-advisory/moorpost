@@ -5,6 +5,11 @@
 
 set -euo pipefail
 
+# /opt/node/bin holds Node + npm (installed in step 2). Put it on PATH up
+# front so npm-installed global binaries (e.g. claude-code in step 3) are
+# resolvable by the rest of this script via `command -v`.
+export PATH="/opt/node/bin:${PATH}"
+
 LOG=/var/log/moorpost-bootstrap.log
 exec > >(tee -a "$LOG") 2>&1
 
@@ -56,6 +61,15 @@ if ! command -v node >/dev/null 2>&1 || \
     ln -sf /opt/node/bin/npm  /usr/local/bin/npm
     ln -sf /opt/node/bin/npx  /usr/local/bin/npx
 fi
+
+# Make /opt/node/bin available to interactive shells (SSH sessions) and
+# systemd units — the bootstrap script's own PATH export is only seen by
+# this script's processes.
+cat > /etc/profile.d/moorpost-node.sh <<'NODE_PROFILE_EOF'
+export PATH="/opt/node/bin:${PATH}"
+NODE_PROFILE_EOF
+chmod 0644 /etc/profile.d/moorpost-node.sh
+
 echo "[moorpost] node: $(node --version 2>/dev/null || echo MISSING)"
 
 # --------------------------------------------------------------------------
@@ -64,6 +78,12 @@ echo "[moorpost] node: $(node --version 2>/dev/null || echo MISSING)"
 echo "[moorpost] step 3: Claude Code CLI"
 if ! command -v claude >/dev/null 2>&1; then
     npm install -g @anthropic-ai/claude-code{{if .ClaudeCodeVersion}}@{{.ClaudeCodeVersion}}{{end}}
+    # npm puts global binaries in /opt/node/bin (already on this script's
+    # PATH). Also symlink to /usr/local/bin so the e2e probe and any user
+    # whose PATH wasn't refreshed can still find it.
+    if [ -e /opt/node/bin/claude ] && [ ! -e /usr/local/bin/claude ]; then
+        ln -sf /opt/node/bin/claude /usr/local/bin/claude
+    fi
 fi
 echo "[moorpost] claude: $(claude --version 2>/dev/null || echo MISSING)"
 
