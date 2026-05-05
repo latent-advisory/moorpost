@@ -18,7 +18,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg jq tmux \
-    ripgrep fd-find \
+    ripgrep fd-find xz-utils \
     git unzip
 
 # `fd-find` installs as `fdfind` on Debian/Ubuntu; symlink for muscle memory.
@@ -27,13 +27,34 @@ if [ ! -e /usr/local/bin/fd ] && command -v fdfind >/dev/null 2>&1; then
 fi
 
 # --------------------------------------------------------------------------
-# 2. Node.js {{.NodeVersion}}
+# 2. Node.js {{.NodeVersion}} (official tarball, no NodeSource apt repo)
 # --------------------------------------------------------------------------
+# Why a tarball instead of NodeSource: the apt-based path (apt-get update
+# after adding nodesource → apt-get install nodejs) is the slowest and
+# flakiest part of bootstrap. A direct tarball fetch from nodejs.org is one
+# ~30MB download, takes ~10-30s on GCE network, and has no apt-mirror
+# dependency.
 echo "[moorpost] step 2: Node.js {{.NodeVersion}}"
 if ! command -v node >/dev/null 2>&1 || \
    [ "$(node --version 2>/dev/null | cut -dv -f2 | cut -d. -f1)" != "{{.NodeVersion}}" ]; then
-    curl -fsSL https://deb.nodesource.com/setup_{{.NodeVersion}}.x | bash -
-    apt-get install -y nodejs
+    case "$(uname -m)" in
+        x86_64)  NODE_ARCH=linux-x64 ;;
+        aarch64) NODE_ARCH=linux-arm64 ;;
+        *) echo "[moorpost] unsupported arch: $(uname -m)"; exit 1 ;;
+    esac
+    NODE_DIST="https://nodejs.org/dist/latest-v{{.NodeVersion}}.x"
+    NODE_TARBALL=$(curl -fsSL "${NODE_DIST}/SHASUMS256.txt" \
+        | awk -v a="$NODE_ARCH" '$2 ~ a"\\.tar\\.xz$"{print $2; exit}')
+    if [ -z "$NODE_TARBALL" ]; then
+        echo "[moorpost] could not resolve node tarball name from $NODE_DIST"; exit 1
+    fi
+    curl -fsSL "${NODE_DIST}/${NODE_TARBALL}" -o /tmp/node.tar.xz
+    install -d -m 0755 /opt/node
+    tar -xJf /tmp/node.tar.xz -C /opt/node --strip-components=1
+    rm -f /tmp/node.tar.xz
+    ln -sf /opt/node/bin/node /usr/local/bin/node
+    ln -sf /opt/node/bin/npm  /usr/local/bin/npm
+    ln -sf /opt/node/bin/npx  /usr/local/bin/npx
 fi
 echo "[moorpost] node: $(node --version 2>/dev/null || echo MISSING)"
 

@@ -23,11 +23,18 @@ import (
 	"strings"
 )
 
-// CheckIntervalMinutes is how often the systemd timer wakes the script.
-// 5 minutes is a reasonable balance: short enough that "stop after 60min"
-// has 60/5 = 12 sample points (the threshold check is robust to one or
-// two transient spikes), long enough that the timer's load is negligible.
-const CheckIntervalMinutes = 5
+// DefaultCheckIntervalMinutes is how often the systemd timer wakes the
+// script when the caller doesn't override. 5 minutes is a reasonable
+// balance: short enough that "stop after 60min" has 60/5 = 12 sample
+// points (the threshold check is robust to one or two transient spikes),
+// long enough that the timer's load is negligible.
+const DefaultCheckIntervalMinutes = 5
+
+// CheckIntervalMinutes preserves the v0.x-era exported name used by tests
+// that assert "INTERVAL=5" against the default-rendered script. New code
+// should pass an explicit interval via BuildIdleMonitorUnitsWithInterval
+// or BootstrapVars.CheckIntervalMinutes instead of relying on this.
+const CheckIntervalMinutes = DefaultCheckIntervalMinutes
 
 // IdleMonitorUnits is the bundle of files installed for VM-side auto-stop.
 type IdleMonitorUnits struct {
@@ -40,20 +47,32 @@ type IdleMonitorUnits struct {
 }
 
 // BuildIdleMonitorUnits returns the script + service + timer for an idle
-// threshold of thresholdMinutes. Threshold of 0 returns empty units (caller
+// threshold of thresholdMinutes, using DefaultCheckIntervalMinutes for the
+// systemd timer cadence. Threshold of 0 returns empty units (caller
 // should not install when 0).
 func BuildIdleMonitorUnits(thresholdMinutes int) IdleMonitorUnits {
+	return BuildIdleMonitorUnitsWithInterval(thresholdMinutes, DefaultCheckIntervalMinutes)
+}
+
+// BuildIdleMonitorUnitsWithInterval is BuildIdleMonitorUnits with an
+// explicit systemd timer cadence in minutes. Used by the e2e test to lower
+// the wait time for the auto-stop transition; production callers should
+// generally use DefaultCheckIntervalMinutes.
+func BuildIdleMonitorUnitsWithInterval(thresholdMinutes, intervalMinutes int) IdleMonitorUnits {
 	if thresholdMinutes <= 0 {
 		return IdleMonitorUnits{}
 	}
+	if intervalMinutes <= 0 {
+		intervalMinutes = DefaultCheckIntervalMinutes
+	}
 	return IdleMonitorUnits{
-		Script:  buildIdleScript(thresholdMinutes),
+		Script:  buildIdleScript(thresholdMinutes, intervalMinutes),
 		Service: buildIdleService(),
-		Timer:   buildIdleTimer(),
+		Timer:   buildIdleTimer(intervalMinutes),
 	}
 }
 
-func buildIdleScript(thresholdMinutes int) string {
+func buildIdleScript(thresholdMinutes, intervalMinutes int) string {
 	const tmpl = `#!/usr/bin/env bash
 # Moorpost VM-side idle monitor. Installed when mode=persistent.
 # Stops the VM via 'sudo shutdown -h now' after {{THRESHOLD}} consecutive
@@ -94,7 +113,7 @@ if [ "$new" -ge "$THRESHOLD" ]; then
 fi
 `
 	out := strings.ReplaceAll(tmpl, "{{THRESHOLD}}", fmt.Sprintf("%d", thresholdMinutes))
-	out = strings.ReplaceAll(out, "{{INTERVAL}}", fmt.Sprintf("%d", CheckIntervalMinutes))
+	out = strings.ReplaceAll(out, "{{INTERVAL}}", fmt.Sprintf("%d", intervalMinutes))
 	return out
 }
 
@@ -109,7 +128,7 @@ User=root
 `
 }
 
-func buildIdleTimer() string {
+func buildIdleTimer(intervalMinutes int) string {
 	return fmt.Sprintf(`[Unit]
 Description=Run moorpost idle check every %d minutes
 
@@ -121,7 +140,7 @@ Unit=moorpost-idle.service
 
 [Install]
 WantedBy=timers.target
-`, CheckIntervalMinutes, CheckIntervalMinutes, CheckIntervalMinutes)
+`, intervalMinutes, intervalMinutes, intervalMinutes)
 }
 
 // renderIdleInstall returns the inline shell snippet that the bootstrap

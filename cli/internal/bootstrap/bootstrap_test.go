@@ -23,7 +23,7 @@ func TestRenderSubstitutesVars(t *testing.T) {
 		"project=argus",
 		"/Users/landytang/argus",
 		"landytang",
-		"setup_20.x",
+		"latest-v20.x",
 		"@anthropic-ai/claude-code@2.0.0",
 		"chmod 0600 /etc/moorpost/env",
 		"ln -sfn",
@@ -42,8 +42,8 @@ func TestRenderDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Render: %v", err)
 	}
-	if !strings.Contains(out, "setup_20.x") {
-		t.Error("default Node version 20 should be applied")
+	if !strings.Contains(out, "latest-v20.x") {
+		t.Error("default Node version 20 should appear in the nodejs.org URL")
 	}
 	if !strings.Contains(out, "moorpost") {
 		t.Error("default RemoteUser 'moorpost' should appear")

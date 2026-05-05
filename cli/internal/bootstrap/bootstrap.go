@@ -40,9 +40,17 @@ type BootstrapVars struct {
 
 	// IdleAutoStopMinutes installs the VM-side idle monitor when > 0.
 	// Should only be set when the project's mode is `persistent`. The
-	// installed systemd timer polls every 5 minutes and stops the VM
-	// after this many consecutive idle minutes.
+	// installed systemd timer polls every CheckIntervalMinutes minutes
+	// (default 5) and stops the VM after this many consecutive idle
+	// minutes.
 	IdleAutoStopMinutes int
+
+	// CheckIntervalMinutes overrides how often the VM-side systemd timer
+	// wakes the idle-check script. 0 (default) uses
+	// DefaultCheckIntervalMinutes. Lowered by the e2e test so the
+	// auto-stop transition fires within minutes instead of tens of
+	// minutes; production callers should leave it at 0.
+	CheckIntervalMinutes int
 
 	// IdleMonitorInstall is the rendered shell snippet that the template
 	// includes inline. Computed by Render from IdleAutoStopMinutes.
@@ -77,7 +85,13 @@ func Render(v BootstrapVars) (string, error) {
 	}
 	v.applyDefaults()
 	if v.IdleAutoStopMinutes > 0 {
-		v.IdleMonitorInstall = renderIdleInstall(BuildIdleMonitorUnits(v.IdleAutoStopMinutes))
+		interval := v.CheckIntervalMinutes
+		if interval <= 0 {
+			interval = DefaultCheckIntervalMinutes
+		}
+		v.IdleMonitorInstall = renderIdleInstall(
+			BuildIdleMonitorUnitsWithInterval(v.IdleAutoStopMinutes, interval),
+		)
 	}
 	tmpl, err := template.New("bootstrap").Parse(rawTemplate)
 	if err != nil {

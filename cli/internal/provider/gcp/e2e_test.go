@@ -364,12 +364,18 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 	}
 
 	pubKey := generateEd25519PubKey(t)
-	const thresholdMinutes = 5 // matches CheckIntervalMinutes — first all-idle check stops
+	// Use a 1-min check interval and 1-min idle threshold so the auto-stop
+	// transition fires shortly after bootstrap completes. Production
+	// defaults to 5 min (DefaultCheckIntervalMinutes); the e2e overrides
+	// these to keep wall-clock + GCP cost low.
+	const thresholdMinutes = 1
+	const intervalMinutes = 1
 	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
-		ProjectSlug:         "e2e-autostop",
-		LocalAbsPath:        "/Users/landytang/argus",
-		RemoteUser:          "moorpost",
-		IdleAutoStopMinutes: thresholdMinutes,
+		ProjectSlug:          "e2e-autostop",
+		LocalAbsPath:         "/Users/landytang/argus",
+		RemoteUser:           "moorpost",
+		IdleAutoStopMinutes:  thresholdMinutes,
+		CheckIntervalMinutes: intervalMinutes,
 	})
 	if err != nil {
 		t.Fatalf("bootstrap.Render: %v", err)
@@ -448,17 +454,16 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 	// Now the critical phase: do nothing. The polling SSH calls above each
 	// open + close an ssh session. After the last one, no SSH session
 	// remains; no tmux server; no mutagen-agent. The idle-check script
-	// should see all three signals at zero on its next 5-min tick and
-	// (with threshold=5) stop the VM after one tick.
+	// should see all three signals at zero on its next tick and stop the
+	// VM after one tick (threshold==intervalMinutes).
 	//
-	// Wall-clock from "no more SSH" to "VM TERMINATED": the systemd
-	// OnUnitActiveSec=5min timer fires every 5 minutes; the script then
-	// runs `sudo shutdown -h now`. GCE detects shutdown within ~30s and
-	// transitions the instance to TERMINATED. Worst-case wait: ~6 min.
-	// Budget: 15 min to give comfortable margin.
-	t.Log("✓ all SSH closed; waiting for VM to auto-stop (≤15min)...")
-	stopDeadline := time.Now().Add(15 * time.Minute)
-	pollInterval := 60 * time.Second
+	// With the 1-min interval used here, worst-case wait is ~2 min from
+	// "no more SSH" to "VM TERMINATED" (one timer fire + shutdown +
+	// state transition). Budget: 5 min to keep headroom for slow GCE
+	// state propagation.
+	t.Log("✓ all SSH closed; waiting for VM to auto-stop (≤5min)...")
+	stopDeadline := time.Now().Add(5 * time.Minute)
+	pollInterval := 20 * time.Second
 	stopped := false
 	var lastStatus string
 	for time.Now().Before(stopDeadline) {
