@@ -92,10 +92,13 @@ echo "[moorpost] claude: $(claude --version 2>/dev/null || echo MISSING)"
 # --------------------------------------------------------------------------
 echo "[moorpost] step 4: uv"
 if ! command -v uv >/dev/null 2>&1; then
-    curl -fsSL https://astral.sh/uv/install.sh | sh
-    # Move to /usr/local/bin so it's on PATH for all users.
-    if [ -f "$HOME/.local/bin/uv" ] && [ ! -e /usr/local/bin/uv ]; then
-        ln -s "$HOME/.local/bin/uv" /usr/local/bin/uv
+    # The astral.sh installer drops uv at $HOME/.local/bin/uv. cloud-init
+    # runs this script with HOME unset, so use a default and override the
+    # installer's HOME to make it deterministic.
+    INSTALLER_HOME="${HOME:-/root}"
+    HOME="$INSTALLER_HOME" curl -fsSL https://astral.sh/uv/install.sh | HOME="$INSTALLER_HOME" sh
+    if [ -f "$INSTALLER_HOME/.local/bin/uv" ] && [ ! -e /usr/local/bin/uv ]; then
+        ln -s "$INSTALLER_HOME/.local/bin/uv" /usr/local/bin/uv
     fi
 fi
 
