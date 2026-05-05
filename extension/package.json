@@ -135,45 +135,21 @@
     "viewsWelcome": [
       {
         "view": "moorpost.projectTree",
-        "contents": "No Moorpost project here yet.\n\nMoorpost lets you hand off Claude Code sessions between your laptop and a remote VM.\n\n[Bootstrap (one-shot)](command:moorpost.bootstrap)\n\nRuns prereqs, sign-in, and project init in one command. The walkthrough (auto-shown on install) covers the same steps with per-step explanations."
+        "contents": "No Moorpost project here yet.\n\nMoorpost lets you hand off Claude Code sessions between your laptop and a remote VM.\n\n[Bootstrap](command:moorpost.bootstrap)\n\nOne-shot setup: prereqs, sign-in, project init, and (optionally) the VM. Skips work that's already done."
       }
     ],
     "walkthroughs": [
       {
         "id": "moorpost.gettingStarted",
         "title": "Get started with Moorpost",
-        "description": "Set up Moorpost in 4 steps: install prerequisites, sign in, initialize a project, and provision your remote VM.",
+        "description": "One click. Bootstrap installs prereqs, signs you in, initializes the project, and (optionally) provisions the VM.",
         "steps": [
           {
-            "id": "prereqs",
-            "title": "Install prerequisites",
-            "description": "Moorpost needs gcloud, mutagen, tmux, ripgrep, rsync, node, and the claude CLI on your PATH.\n\n[Run setup](command:moorpost.runSetup)\n\nOpens a terminal and runs `moorpost setup`, which detects what's missing and prompts you per-tool to install via brew/npm.",
+            "id": "bootstrap",
+            "title": "Bootstrap (one-shot)",
+            "description": "$(rocket) Click below. The wizard asks which folder to manage and whether to also provision a remote VM, then handles everything.\n\n[Bootstrap](command:moorpost.bootstrap)\n\nUnder the hood: detects missing prereqs and installs them via brew/apt, opens a browser for the Claude OAuth flow (~30s), writes `.moorpost/config.yaml`, and (if you said yes) provisions a GCE VM. Skips work that's already done.",
             "media": {
-              "markdown": "media/walkthrough/prereqs.md"
-            }
-          },
-          {
-            "id": "auth",
-            "title": "Sign in to Claude",
-            "description": "Authenticates the Claude CLI and caches the OAuth token in your OS keychain. One-time per machine.\n\n[Sign in](command:moorpost.signIn)",
-            "media": {
-              "markdown": "media/walkthrough/auth.md"
-            }
-          },
-          {
-            "id": "init",
-            "title": "Initialize a project",
-            "description": "Pick which workspace folder Moorpost should manage. Writes `.moorpost/config.yaml` with sensible defaults.\n\n[Initialize](command:moorpost.initProject)",
-            "media": {
-              "markdown": "media/walkthrough/init.md"
-            }
-          },
-          {
-            "id": "provision",
-            "title": "Provision the remote VM",
-            "description": "Creates the GCP VM (left stopped to save cost). One-time per project.\n\n[Provision](command:moorpost.provision)",
-            "media": {
-              "markdown": "media/walkthrough/provision.md"
+              "markdown": "media/walkthrough/bootstrap.md"
             }
           }
         ]

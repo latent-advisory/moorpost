@@ -105,27 +105,39 @@ export function startConfiguredContextWatcher(
  * globalState so we don't nag — once dismissed (or accepted), never shown
  * again on this machine. Skipped silently when the workspace is already
  * configured (the user clearly knows what Moorpost is).
+ *
+ * Logs every decision to the "Moorpost" OutputChannel so failed-to-fire
+ * cases can be diagnosed without a debug build.
  */
 export async function maybeShowFirstRunNudge(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const KEY = 'moorpost.firstRunNudgeShownAt';
-  if (context.globalState.get<number>(KEY)) return;
+  // Versioned key — bump suffix to break cached "already shown" state
+  // from older builds without touching state.vscdb directly.
+  const KEY = 'moorpost.firstRunNudgeShownAt.v2';
+  const log = vscode.window.createOutputChannel('Moorpost');
+  const seen = context.globalState.get<number>(KEY);
+  if (seen) {
+    log.appendLine(`[nudge] already shown at ${new Date(seen).toISOString()}; skipping`);
+    return;
+  }
 
   const cwd = workspaceRoot();
   const status = cwd ? await getStatus(cwd) : null;
   if (status) {
-    // Already configured — silently mark as seen and move on.
+    log.appendLine(`[nudge] workspace already configured (project=${status.project}); marking seen`);
     await context.globalState.update(KEY, Date.now());
     return;
   }
 
+  log.appendLine(`[nudge] firing first-run notification (cwd=${cwd ?? '<none>'})`);
   const choice = await vscode.window.showInformationMessage(
     'Moorpost installed. Run Bootstrap to set up your laptop ↔ remote VM workflow.',
     'Get Started',
     'Open walkthrough',
     'Not now',
   );
+  log.appendLine(`[nudge] user chose: ${choice ?? '<dismissed>'}`);
   await context.globalState.update(KEY, Date.now());
   if (choice === 'Get Started') {
     await vscode.commands.executeCommand('moorpost.bootstrap');
