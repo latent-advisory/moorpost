@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 	"time"
 
@@ -153,6 +154,15 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		}
 	}
 
+	// Provider.Start returns once GCE has assigned an IP, but sshd on
+	// the booting VM isn't accepting connections yet — typical 20-60s
+	// gap. Without this poll, the next step (InjectCredential) hits
+	// "ssh: connect to host ... port 22: Operation timed out". Poll
+	// the OS-level TCP handshake until 22/tcp is open, capped at 90s.
+	if err := waitForSSH(ctx, out, tgt.Host, tgt.Port, 90*time.Second); err != nil {
+		return fmt.Errorf("handoff: %w", err)
+	}
+
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
 	// agent puts it).
 	agentTarget := agent.SSHTarget{Host: tgt.Host, Port: tgt.Port, User: tgt.User, IdentityFile: tgt.IdentityFile}
@@ -274,6 +284,45 @@ func waitForIP(ctx context.Context, p provider.Provider, vmID string, timeout ti
 			delay = delay * 2
 			if delay > 2*time.Second {
 				delay = 2 * time.Second
+			}
+		}
+	}
+}
+
+// waitForSSH polls the VM's 22/tcp until it accepts connections, or until
+// timeout elapses. Avoids the "Provider.Start returned, but sshd hasn't
+// finished booting" race that surfaces as "Operation timed out" on the
+// next ssh-using step (credential inject, sync, etc).
+func waitForSSH(ctx context.Context, out io.Writer, host string, port int, timeout time.Duration) error {
+	if port == 0 {
+		port = 22
+	}
+	addr := fmt.Sprintf("%s:%d", host, port)
+	fmt.Fprintf(out, "Waiting for sshd at %s ...\n", addr)
+	deadline := time.Now().Add(timeout)
+	delay := 1 * time.Second
+	for {
+		dialCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		var d net.Dialer
+		conn, err := d.DialContext(dialCtx, "tcp", addr)
+		cancel()
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("sshd at %s not reachable within %s: %w", addr, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		// Backoff: 1s → 2s → 4s, capped at 4s.
+		if delay < 4*time.Second {
+			delay = delay * 2
+			if delay > 4*time.Second {
+				delay = 4 * time.Second
 			}
 		}
 	}
