@@ -9,9 +9,12 @@ let refreshTimer: NodeJS.Timeout | undefined;
 
 export function setupStatusBar(context: vscode.ExtensionContext): void {
   item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-  item.command = 'moorpost.status';
+  // Click does the right thing for the current state (bootstrap / handoff /
+  // return). Use the palette command "Moorpost: Show status" if you want
+  // status details instead.
+  item.command = 'moorpost.toggleSide';
   item.text = '$(moorpost-loading) Moorpost…';
-  item.tooltip = 'Click for full status';
+  item.tooltip = 'Click to switch local ↔ remote';
   item.show();
   context.subscriptions.push(item);
 

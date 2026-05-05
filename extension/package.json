@@ -2,7 +2,7 @@
   "name": "moorpost",
   "displayName": "Moorpost",
   "description": "Tether your laptop to a remote forward base where Claude Code keeps working.",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "publisher": "latent-advisory",
   "license": "Apache-2.0",
   "homepage": "https://github.com/latent-advisory/moorpost",
@@ -27,10 +27,35 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
-    "workspaceContains:.moorpost/config.yaml"
+    "workspaceContains:**/.moorpost/config.yaml"
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "moorpost.bootstrap",
+        "title": "Moorpost: Bootstrap (one-shot setup)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.getStarted",
+        "title": "Moorpost: Get started",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.runSetup",
+        "title": "Moorpost: Install prerequisites (setup)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.runDoctor",
+        "title": "Moorpost: Run doctor (diagnostics)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.initProject",
+        "title": "Moorpost: Initialize project (choose folder)",
+        "category": "Moorpost"
+      },
       {
         "command": "moorpost.signIn",
         "title": "Moorpost: Sign in (claude OAuth)",
@@ -81,6 +106,16 @@
         "command": "moorpost.showCost",
         "title": "Moorpost: Show cost details",
         "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.toggleSide",
+        "title": "Moorpost: Switch local ↔ remote",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.editConfig",
+        "title": "Moorpost: Edit project config (machine type, region, sync)",
+        "category": "Moorpost"
       }
     ],
     "viewsContainers": {
@@ -101,7 +136,69 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "moorpost.projectTree",
+        "contents": "No Moorpost project here yet.\n\nMoorpost lets you hand off Claude Code sessions between your laptop and a remote VM.\n\n[Bootstrap (one-shot)](command:moorpost.bootstrap)\n\nRuns prereqs, sign-in, and project init in one command.\n\n[Step-by-step instead](command:moorpost.getStarted)"
+      }
+    ],
+    "walkthroughs": [
+      {
+        "id": "moorpost.gettingStarted",
+        "title": "Get started with Moorpost",
+        "description": "Set up Moorpost in 4 steps: install prerequisites, sign in, initialize a project, and provision your remote VM.",
+        "steps": [
+          {
+            "id": "prereqs",
+            "title": "Install prerequisites",
+            "description": "Moorpost needs gcloud, mutagen, tmux, ripgrep, rsync, node, and the claude CLI on your PATH.\n\n[Run setup](command:moorpost.runSetup)\n\nOpens a terminal and runs `moorpost setup`, which detects what's missing and prompts you per-tool to install via brew/npm.",
+            "media": {
+              "markdown": "media/walkthrough/prereqs.md"
+            }
+          },
+          {
+            "id": "auth",
+            "title": "Sign in to Claude",
+            "description": "Authenticates the Claude CLI and caches the OAuth token in your OS keychain. One-time per machine.\n\n[Sign in](command:moorpost.signIn)",
+            "media": {
+              "markdown": "media/walkthrough/auth.md"
+            }
+          },
+          {
+            "id": "init",
+            "title": "Initialize a project",
+            "description": "Pick which workspace folder Moorpost should manage. Writes `.moorpost/config.yaml` with sensible defaults.\n\n[Initialize](command:moorpost.initProject)",
+            "media": {
+              "markdown": "media/walkthrough/init.md"
+            }
+          },
+          {
+            "id": "provision",
+            "title": "Provision the remote VM",
+            "description": "Creates the GCP VM (left stopped to save cost). One-time per project.\n\n[Provision](command:moorpost.provision)",
+            "media": {
+              "markdown": "media/walkthrough/provision.md"
+            }
+          }
+        ]
+      }
+    ],
     "menus": {
+      "commandPalette": [
+        { "command": "moorpost.refreshTree", "when": "false" },
+        { "command": "moorpost.initProject", "when": "false" },
+        { "command": "moorpost.runSetup", "when": "false" },
+        { "command": "moorpost.signIn", "when": "false" },
+        { "command": "moorpost.handoff", "when": "moorpost.configured" },
+        { "command": "moorpost.return", "when": "moorpost.configured" },
+        { "command": "moorpost.toggleSide", "when": "moorpost.configured" },
+        { "command": "moorpost.provision", "when": "moorpost.configured" },
+        { "command": "moorpost.attach", "when": "moorpost.configured" },
+        { "command": "moorpost.destroy", "when": "moorpost.configured" },
+        { "command": "moorpost.showCost", "when": "moorpost.configured" },
+        { "command": "moorpost.showConflicts", "when": "moorpost.configured" },
+        { "command": "moorpost.editConfig", "when": "moorpost.configured" }
+      ],
       "view/title": [
         {
           "command": "moorpost.refreshTree",

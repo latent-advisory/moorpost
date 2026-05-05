@@ -4,6 +4,8 @@
 import * as vscode from 'vscode';
 import { runInTerminal, getStatus, workspaceRoot } from '../cli';
 import type { MoorpostTreeProvider } from '../treeView';
+import { bootstrapProject, getStarted, initProject } from './getStarted';
+import { editConfig, toggleSide } from './extras';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -18,6 +20,20 @@ export function registerCommands(
   };
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('moorpost.bootstrap', bootstrapProject),
+
+    vscode.commands.registerCommand('moorpost.getStarted', getStarted),
+
+    vscode.commands.registerCommand('moorpost.runSetup', async () => {
+      runInTerminal(['setup']);
+    }),
+
+    vscode.commands.registerCommand('moorpost.runDoctor', async () => {
+      runInTerminal(['doctor'], workspaceRoot());
+    }),
+
+    vscode.commands.registerCommand('moorpost.initProject', initProject),
+
     vscode.commands.registerCommand('moorpost.signIn', async () => {
       runInTerminal(['auth']);
     }),
@@ -119,5 +135,9 @@ export function registerCommands(
       }
       runInTerminal(['cost', '--explain'], cwd);
     }),
+
+    vscode.commands.registerCommand('moorpost.editConfig', editConfig),
+
+    vscode.commands.registerCommand('moorpost.toggleSide', toggleSide),
   );
 }
