@@ -441,7 +441,7 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 		}
 	}
 	if !bootstrapped {
-		t.Fatal("bootstrap did not finish within 10m (claude or moorpost-idle.timer missing)")
+		t.Fatal("bootstrap did not finish within 15m (claude or moorpost-idle.timer missing)")
 	}
 	t.Log("✓ bootstrap done; moorpost-idle.timer is active")
 
