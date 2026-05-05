@@ -111,6 +111,15 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		}
 	}
 
+	// Pre-flight credential check BEFORE starting the VM. AuthenticateLocal
+	// hits the keychain cache; if no token is found the agent surfaces a
+	// clear "not authenticated" error here, before we spend any time/money
+	// spinning up a VM that we couldn't use anyway.
+	cred, err := c.Agent.AuthenticateLocal(ctx)
+	if err != nil {
+		return fmt.Errorf("handoff: load credential (run `moorpost auth` first?): %w", err)
+	}
+
 	// Cost cap.
 	if err := enforceCostCap(ctx, c, opts.OverrideCap); err != nil {
 		return fmt.Errorf("handoff: %w", err)
@@ -131,10 +140,6 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
 	// agent puts it).
-	cred, err := c.Agent.AuthenticateLocal(ctx) // hits keychain cache
-	if err != nil {
-		return fmt.Errorf("handoff: load credential: %w", err)
-	}
 	agentTarget := agent.SSHTarget{Host: tgt.Host, Port: tgt.Port, User: tgt.User}
 	if err := c.Agent.InjectCredential(ctx, agentTarget, cred); err != nil {
 		return fmt.Errorf("handoff: inject credential: %w", err)

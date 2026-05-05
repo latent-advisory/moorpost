@@ -69,6 +69,46 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
+
+      // Preflight: surface specific, actionable errors instead of letting
+      // the CLI fail mid-flight after we've already spun up a VM (or
+      // shown the modal confirm).
+      const status = await getStatus(cwd);
+      if (!status) {
+        const pick = await vscode.window.showWarningMessage(
+          'No Moorpost project here. Run Bootstrap first.',
+          'Run Bootstrap',
+          'Dismiss',
+        );
+        if (pick === 'Run Bootstrap') {
+          await vscode.commands.executeCommand('moorpost.bootstrap');
+        }
+        return;
+      }
+      if (!status.vm_id) {
+        const pick = await vscode.window.showWarningMessage(
+          'No VM provisioned yet. Provision one before handoff.',
+          'Provision now',
+          'Dismiss',
+        );
+        if (pick === 'Provision now') {
+          await vscode.commands.executeCommand('moorpost.provision');
+        }
+        return;
+      }
+      if (status.active_side === 'remote') {
+        const pick = await vscode.window.showInformationMessage(
+          'Session is already on the remote VM — nothing to hand off.',
+          'Open live session',
+          'Return to local',
+          'Dismiss',
+        );
+        if (pick === 'Open live session') openOrFocusAttach(cwd);
+        else if (pick === 'Return to local')
+          await vscode.commands.executeCommand('moorpost.return');
+        return;
+      }
+
       const choice = await vscode.window.showInformationMessage(
         'Hand off the active Claude session to the remote VM?',
         { modal: true, detail: 'Local Claude pauses. After handoff, a terminal will open with the live remote session — you continue the conversation there.' },
@@ -100,6 +140,28 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
+
+      // Preflight: only meaningful if a remote session exists.
+      const status = await getStatus(cwd);
+      if (!status) {
+        vscode.window.showWarningMessage(
+          'No Moorpost project here. Nothing to return.',
+        );
+        return;
+      }
+      if (!status.vm_id) {
+        vscode.window.showWarningMessage(
+          'No VM provisioned. There is no remote session to return from.',
+        );
+        return;
+      }
+      if ((status.active_side ?? 'local') === 'local') {
+        vscode.window.showInformationMessage(
+          'Session is already local — nothing to return.',
+        );
+        return;
+      }
+
       // Close the attached terminal first so the disconnect-warning
       // logic doesn't trip when SSH drops as part of the planned return.
       closeAttachQuietly();
