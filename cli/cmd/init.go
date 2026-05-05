@@ -23,13 +23,27 @@ agent. After running init, run ` + "`moorpost auth`" + ` to sign in, then
 ` + "`moorpost provision`" + ` to create the VM.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		opts := InitOptions{
-			Dir:         initFlagDir,
-			Slug:        initFlagSlug,
-			GCPProject:  initFlagGCPProject,
-			Region:      initFlagRegion,
-			Zone:        initFlagZone,
-			MachineType: initFlagMachineType,
-			Force:       initFlagForce,
+			Dir:                 initFlagDir,
+			Slug:                initFlagSlug,
+			GCPProject:          initFlagGCPProject,
+			Region:              initFlagRegion,
+			Zone:                initFlagZone,
+			MachineType:         initFlagMachineType,
+			Force:               initFlagForce,
+			GCloudConfiguration: initFlagGCPConfig,
+		}
+		// Interactive picker when no --gcp-project flag was passed:
+		// gives users with multiple gcloud accounts a clear choice
+		// (and lets first-time users start a fresh login). Skipped
+		// when --gcp-project is set so CI / scripted runs don't hang
+		// on a TTY-less stdin.
+		if opts.GCPProject == "" {
+			cfgName, project, err := promptForGCPConfiguration(cmd.InOrStdin(), cmd.OutOrStdout())
+			if err != nil {
+				return fmt.Errorf("init: %w", err)
+			}
+			opts.GCloudConfiguration = cfgName
+			opts.GCPProject = project
 		}
 		return RunInit(cmd.OutOrStdout(), opts)
 	},
@@ -39,6 +53,7 @@ var (
 	initFlagDir         string
 	initFlagSlug        string
 	initFlagGCPProject  string
+	initFlagGCPConfig   string
 	initFlagRegion      string
 	initFlagZone        string
 	initFlagMachineType string
@@ -48,7 +63,8 @@ var (
 func init() {
 	initCmd.Flags().StringVar(&initFlagDir, "dir", "", "directory to scaffold (default: cwd)")
 	initCmd.Flags().StringVar(&initFlagSlug, "slug", "", "project slug (default: directory basename)")
-	initCmd.Flags().StringVar(&initFlagGCPProject, "gcp-project", "", "GCP project ID (required for usable config)")
+	initCmd.Flags().StringVar(&initFlagGCPProject, "gcp-project", "", "GCP project ID (skip the interactive picker; required for non-interactive runs)")
+	initCmd.Flags().StringVar(&initFlagGCPConfig, "gcp-config", "", "gcloud configuration name to pin moorpost to (default: prompt)")
 	initCmd.Flags().StringVar(&initFlagRegion, "region", "us-central1", "GCP region")
 	initCmd.Flags().StringVar(&initFlagZone, "zone", "", "GCP zone (default: <region>-a)")
 	initCmd.Flags().StringVar(&initFlagMachineType, "machine-type", "e2-standard-2", "GCP machine type")
@@ -65,6 +81,11 @@ type InitOptions struct {
 	Zone        string // default: <region>-a
 	MachineType string // default: e2-standard-2
 	Force       bool
+	// GCloudConfiguration is the gcloud configuration name to pin moorpost
+	// to (passed via --configuration on every gcloud call). Empty = use
+	// whichever gcloud config is currently active. Populated from the
+	// interactive picker in the cobra layer when not provided as a flag.
+	GCloudConfiguration string
 }
 
 // detectGCPProject returns the active project from gcloud config, or empty
@@ -140,6 +161,9 @@ func RunInit(out io.Writer, opts InitOptions) error {
 	}
 	if opts.GCPProject != "" {
 		gcpSub["project"] = opts.GCPProject
+	}
+	if opts.GCloudConfiguration != "" {
+		gcpSub["configuration"] = opts.GCloudConfiguration
 	}
 	cfg.Provider.Raw = map[string]any{"gcp": gcpSub}
 

@@ -53,16 +53,24 @@ type Options struct {
 	// SSHUser is the OS login user on provisioned VMs (used by SSHTarget).
 	// Defaults to the current user if empty.
 	SSHUser string
+
+	// Configuration is the gcloud configuration name to pass via
+	// `--configuration=<name>` on every gcloud invocation. Lets a user
+	// with multiple gcloud configs (different accounts, different
+	// projects) pin moorpost to a specific one rather than relying on
+	// "whichever happens to be active." Empty = use the active config.
+	Configuration string
 }
 
 // engine is the concrete Provider.
 type engine struct {
-	exec    mpexec.Executor
-	binary  string
-	project string
-	region  string
-	zone    string
-	sshUser string
+	exec          mpexec.Executor
+	binary        string
+	project       string
+	region        string
+	zone          string
+	sshUser       string
+	configuration string // optional gcloud --configuration override
 }
 
 // New constructs a GCP provider from a config map. Recognized keys:
@@ -85,6 +93,9 @@ func New(config map[string]any) (provider.Provider, error) {
 	if v, ok := config["ssh_user"].(string); ok {
 		opts.SSHUser = v
 	}
+	if v, ok := config["configuration"].(string); ok {
+		opts.Configuration = v
+	}
 	return NewWithOptions(opts)
 }
 
@@ -94,12 +105,13 @@ func NewWithOptions(opts Options) (provider.Provider, error) {
 		return nil, errors.New("gcp: project is required (set provider.gcp.project in config)")
 	}
 	e := &engine{
-		exec:    opts.Executor,
-		binary:  opts.Binary,
-		project: opts.Project,
-		region:  opts.Region,
-		zone:    opts.Zone,
-		sshUser: opts.SSHUser,
+		exec:          opts.Executor,
+		binary:        opts.Binary,
+		project:       opts.Project,
+		region:        opts.Region,
+		zone:          opts.Zone,
+		sshUser:       opts.SSHUser,
+		configuration: opts.Configuration,
 	}
 	if e.exec == nil {
 		e.exec = mpexec.New()
@@ -160,8 +172,14 @@ func (e *engine) Preflight(ctx context.Context) error {
 }
 
 // gcloudArgs prepends the project + format flags every command needs.
+// When a configuration is pinned, also pass --configuration so the
+// command runs against the chosen account regardless of the gcloud
+// "active" config the user may have switched to.
 func (e *engine) gcloudArgs(args ...string) []string {
 	out := []string{"--project", e.project, "--quiet"}
+	if e.configuration != "" {
+		out = append([]string{"--configuration", e.configuration}, out...)
+	}
 	out = append(out, args...)
 	return out
 }
