@@ -244,9 +244,9 @@
         },
         "moorpost.statusBarRefreshSeconds": {
           "type": "number",
-          "default": 30,
+          "default": 10,
           "minimum": 5,
-          "description": "How often to refresh the status bar by calling `moorpost status`."
+          "description": "How often to refresh the status bar by calling `moorpost status`. Action-driven refreshes (after handoff, return, etc.) happen immediately regardless of this interval."
         },
         "moorpost.promptOnFocusLossMinutes": {
           "type": "number",

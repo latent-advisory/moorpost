@@ -8,17 +8,20 @@ import { bootstrapProject, initProject } from './getStarted';
 import { editConfig, toggleSide } from './extras';
 import { runCliInOutput } from '../output';
 import { closeAttachQuietly, openOrFocusAttach } from '../remoteSession';
+import { refreshStatusBarNow } from '../statusBar';
 
 export function registerCommands(
   context: vscode.ExtensionContext,
   treeProvider?: MoorpostTreeProvider,
 ): void {
-  // Tree refreshes after handoff/return because the active side flips. The CLI
-  // commands run in a terminal so we can't await their exit; refresh on a
-  // short delay to give the CLI time to update state.
+  // Tree + status bar refresh after state-changing commands. The CLI runs
+  // out-of-process; refresh on a short delay so the new state.json is
+  // visible to `moorpost status`.
   const refreshTreeAfter = (ms: number) => {
-    if (!treeProvider) return;
-    setTimeout(() => treeProvider.refresh(), ms);
+    setTimeout(() => {
+      if (treeProvider) treeProvider.refresh();
+      refreshStatusBarNow();
+    }, ms);
   };
 
   context.subscriptions.push(

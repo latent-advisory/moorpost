@@ -7,6 +7,15 @@ import { getStatus, workspaceRoot } from './cli';
 let item: vscode.StatusBarItem | undefined;
 let refreshTimer: NodeJS.Timeout | undefined;
 
+/**
+ * Force an immediate status-bar refresh. Use after commands that change
+ * state (auth, handoff, return, provision) so the user sees the new
+ * state right away instead of waiting for the next 30s tick.
+ */
+export function refreshStatusBarNow(): void {
+  void refresh();
+}
+
 export function setupStatusBar(context: vscode.ExtensionContext): void {
   item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   // Click does the right thing for the current state (bootstrap / handoff /
@@ -24,7 +33,7 @@ export function setupStatusBar(context: vscode.ExtensionContext): void {
 
 function scheduleRefresh(context: vscode.ExtensionContext): void {
   const seconds =
-    vscode.workspace.getConfiguration('moorpost').get<number>('statusBarRefreshSeconds') ?? 30;
+    vscode.workspace.getConfiguration('moorpost').get<number>('statusBarRefreshSeconds') ?? 10;
   refreshTimer = setInterval(() => void refresh(), Math.max(5, seconds) * 1000);
   context.subscriptions.push(new vscode.Disposable(() => {
     if (refreshTimer) clearInterval(refreshTimer);
