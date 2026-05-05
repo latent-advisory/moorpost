@@ -44,7 +44,15 @@ async function refresh(): Promise<void> {
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     return;
   }
-  // Clear any prior warning style.
+  // Configured but unprovisioned — "in-between" state. Surface it
+  // explicitly so the user doesn't think a click means handoff.
+  if (!status.vm_id) {
+    item.text = '$(server-environment) Moorpost · no VM · click to provision';
+    item.tooltip = `Project: ${status.project}\nClick to provision the GCP VM (one-time, ~30s).`;
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    return;
+  }
+  // Configured and provisioned — show normal active-side summary.
   item.backgroundColor = undefined;
   const side = status.active_side ?? 'local';
   const icon = side === 'remote' ? '$(cloud)' : '$(home)';

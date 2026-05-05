@@ -69,41 +69,43 @@ export class MoorpostTreeProvider
 
 /**
  * Pure function so it's trivially unit-testable later. Returns the rows the
- * tree should display for a given status report.
+ * tree should display for a given status report. Each row has a default
+ * left-click action — most lead to "edit config" (opens .moorpost/config.yaml)
+ * since the rows are derived from config; rows with a more direct action
+ * (Active side → toggle, VM → status, Cost → cost details, Conflicts →
+ * conflicts list) override that default.
  */
 export function buildItems(s: StatusReport): MoorpostTreeItem[] {
+  const editConfig: vscode.Command = {
+    command: 'moorpost.editConfig',
+    title: 'Edit project config',
+  };
+  const showStatus: vscode.Command = {
+    command: 'moorpost.status',
+    title: 'Show status',
+  };
   const items: MoorpostTreeItem[] = [
-    new MoorpostTreeItem('Project', s.project, new vscode.ThemeIcon('folder')),
-    new MoorpostTreeItem('Provider', s.provider, new vscode.ThemeIcon('cloud')),
-    new MoorpostTreeItem('Agent', s.agent, new vscode.ThemeIcon('robot')),
-    new MoorpostTreeItem('Sync engine', s.sync, new vscode.ThemeIcon('sync')),
-    new MoorpostTreeItem('Mode', s.mode, new vscode.ThemeIcon('gear')),
+    new MoorpostTreeItem('Project', s.project, new vscode.ThemeIcon('folder'), editConfig),
+    new MoorpostTreeItem('Provider', s.provider, new vscode.ThemeIcon('cloud'), editConfig),
+    new MoorpostTreeItem('Agent', s.agent, new vscode.ThemeIcon('robot'), editConfig),
+    new MoorpostTreeItem('Sync engine', s.sync, new vscode.ThemeIcon('sync'), editConfig),
+    new MoorpostTreeItem('Mode', s.mode, new vscode.ThemeIcon('gear'), editConfig),
   ];
   if (s.active_side) {
     const icon = s.active_side === 'remote' ? 'cloud' : 'home';
-    // contextValue gates the right-click menu (handoff vs return) per
-    // package.json's view/item/context contributions.
     const ctx = `moorpost.activeSide.${s.active_side}`;
+    const toggle: vscode.Command = {
+      command: 'moorpost.toggleSide',
+      title: 'Switch local ↔ remote',
+    };
     items.push(
-      new MoorpostTreeItem(
-        'Active side',
-        s.active_side,
-        new vscode.ThemeIcon(icon),
-        undefined,
-        ctx,
-      ),
+      new MoorpostTreeItem('Active side', s.active_side, new vscode.ThemeIcon(icon), toggle, ctx),
     );
   }
   if (s.vm_id) {
     const vmDetail = s.vm_state ? `${s.vm_id} (${s.vm_state})` : s.vm_id;
     items.push(
-      new MoorpostTreeItem(
-        'VM',
-        vmDetail,
-        new vscode.ThemeIcon('vm'),
-        undefined,
-        'moorpost.vm',
-      ),
+      new MoorpostTreeItem('VM', vmDetail, new vscode.ThemeIcon('vm'), showStatus, 'moorpost.vm'),
     );
   }
   if (typeof s.month_to_date_usd === 'number' && s.month_to_date_usd > 0) {
@@ -112,7 +114,7 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
         'Cost (MTD)',
         `$${s.month_to_date_usd.toFixed(2)} (estimate)`,
         new vscode.ThemeIcon('credit-card'),
-        undefined,
+        { command: 'moorpost.showCost', title: 'Show cost details' },
         'moorpost.cost',
       ),
     );

@@ -30,9 +30,10 @@ export async function editConfig(): Promise<void> {
 
 /**
  * Single-action toggle that does the right thing for the current state:
- *   not configured → bootstrap
- *   active=local   → handoff
- *   active=remote  → return
+ *   no config / no project    → bootstrap
+ *   configured, no VM         → provision
+ *   configured, has VM, local → handoff
+ *   configured, has VM, remote → return
  *
  * Wired to the status bar click and exposed as a palette command.
  */
@@ -45,6 +46,11 @@ export async function toggleSide(): Promise<void> {
   const status = await getStatus(cwd);
   if (!status) {
     await vscode.commands.executeCommand('moorpost.bootstrap');
+    return;
+  }
+  if (!status.vm_id) {
+    // Configured but unprovisioned — the next step in the setup flow.
+    await vscode.commands.executeCommand('moorpost.provision');
     return;
   }
   const side = status.active_side ?? 'local';
