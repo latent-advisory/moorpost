@@ -1,0 +1,101 @@
+#!/bin/bash
+# moorpost-claude-wrapper
+#
+# Goes in the Anthropic Claude Code plugin's `claudeCode.claudeProcessWrapper`
+# setting. Replaces the plugin's default `claude` invocation with one routed
+# by moorpost's per-project active_side:
+#
+#   active_side=local  → exec the real local claude binary (transparent)
+#   active_side=remote → ssh into the project's VM and exec claude there,
+#                        piping stdin/stdout/stderr back to the plugin
+#
+# The plugin sees what looks like normal claude either way; the compute
+# (LLM calls, tool execution) happens wherever active_side points.
+
+set -euo pipefail
+
+STATE="$HOME/.moorpost/state.json"
+
+# Find the real claude binary. Prefer MOORPOST_REAL_CLAUDE env override
+# (CI / advanced users); otherwise probe PATH via `which -a` (works on
+# both macOS bash 3.2 and modern Linux; bash builtin `command -v -a`
+# does NOT exist on macOS's stock bash).
+find_real_claude() {
+  if [[ -n "${MOORPOST_REAL_CLAUDE:-}" ]] && [[ -x "$MOORPOST_REAL_CLAUDE" ]]; then
+    printf '%s' "$MOORPOST_REAL_CLAUDE"
+    return 0
+  fi
+  local self
+  self="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
+  local candidate resolved
+  while IFS= read -r candidate; do
+    [[ -n "$candidate" ]] || continue
+    # Resolve symlinks so we can compare against $self reliably.
+    resolved="$candidate"
+    if command -v readlink >/dev/null 2>&1; then
+      while [[ -L "$resolved" ]]; do
+        resolved="$(readlink "$resolved")"
+      done
+    fi
+    [[ "$resolved" == "$self" ]] && continue
+    [[ "$candidate" == "$self" ]] && continue
+    printf '%s' "$candidate"
+    return 0
+  done < <(which -a claude 2>/dev/null || true)
+  return 1
+}
+
+fallback_local() {
+  local real
+  if real="$(find_real_claude)"; then
+    exec "$real" "$@"
+  fi
+  echo "claude-wrapper: no claude binary on PATH (and MOORPOST_REAL_CLAUDE unset)" >&2
+  exit 127
+}
+
+# No state file: not a moorpost-managed machine. Use real claude.
+[[ -f "$STATE" ]] || fallback_local "$@"
+
+# Walk up from cwd looking for the project key in state.json that matches
+# (state keys are absolute project paths). Use jq for json parsing; if jq
+# is missing or the project isn't found, fall through to local.
+command -v jq >/dev/null 2>&1 || fallback_local "$@"
+
+cwd="$PWD"
+match=""
+while [[ "$cwd" != "/" ]]; do
+  if jq -e --arg p "$cwd" '.projects[$p]' "$STATE" >/dev/null 2>&1; then
+    match="$cwd"
+    break
+  fi
+  cwd="$(dirname "$cwd")"
+done
+[[ -n "$match" ]] || fallback_local "$@"
+
+active=$(jq -r --arg p "$match" '.projects[$p].active_side // "local"' "$STATE")
+[[ "$active" == "remote" ]] || fallback_local "$@"
+
+vm_id=$(jq -r --arg p "$match" '.projects[$p].vm_id // ""' "$STATE")
+vm_ip=$(jq -r --arg v "$vm_id" '.vms[$v].external_ip // ""' "$STATE")
+[[ -n "$vm_ip" ]] || fallback_local "$@"
+
+# Compose the remote command. The bootstrap script's abs-path symlink
+# means $PWD on the local machine resolves to a valid path on the
+# remote (via /Users/.../ → /home/moorpost/moorpost/<slug>), so we can
+# pass the literal local cwd as the remote cd target.
+remote_cmd="cd $(printf '%q' "$PWD") && exec claude"
+for arg in "$@"; do
+  remote_cmd+=" $(printf '%q' "$arg")"
+done
+
+# -t allocates a pty for interactive claude (required for ink-style TUI).
+# StrictHostKeyChecking=accept-new matches the rest of moorpost's ssh
+# policy. The identity file matches GCP's gcloud convention.
+exec ssh \
+  -i "$HOME/.ssh/google_compute_engine" \
+  -o BatchMode=yes \
+  -o ConnectTimeout=15 \
+  -o StrictHostKeyChecking=accept-new \
+  -t \
+  "moorpost@${vm_ip}" -- "$remote_cmd"

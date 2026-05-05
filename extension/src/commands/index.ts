@@ -12,6 +12,10 @@ import {
   openLocalClaude,
   openRemoteClaude,
 } from '../claudeTerminal';
+import {
+  routePluginToLocal,
+  routePluginToRemote,
+} from '../claudePluginIntegration';
 import { refreshStatusBarNow } from '../statusBar';
 
 export function registerCommands(
@@ -156,9 +160,13 @@ export function registerCommands(
         reveal: 'on-error',
       });
       refreshTreeAfter(2000);
-      // After successful handoff, auto-attach so the user lands directly
-      // in the remote Claude pane (the "feels local but happens remote"
-      // experience). Toggleable via settings.
+      // After successful handoff:
+      //  1. Auto-attach the moorpost terminal so the user lands directly
+      //     in the remote Claude pane.
+      //  2. Re-route the Anthropic Claude Code plugin's panel through
+      //     ~/.moorpost/bin/claude-wrapper so typing in the panel also
+      //     goes to remote (same end state regardless of whether the
+      //     user is in the moorpost terminal or the plugin panel).
       if (exit === 0) {
         const auto = vscode.workspace
           .getConfiguration('moorpost')
@@ -166,6 +174,7 @@ export function registerCommands(
         if (auto) {
           openRemoteClaude(cwd);
         }
+        void routePluginToRemote();
       }
     }),
 
@@ -206,21 +215,21 @@ export function registerCommands(
         reveal: 'on-error',
       });
       refreshTreeAfter(2000);
-      // After successful return, auto-open the local Claude side in the
-      // same Moorpost: Claude terminal slot. So the user's "single Claude
-      // window" experience continues in local mode without context-switching.
+      // After successful return:
+      //  1. Auto-open the local Claude side in the same Moorpost: Claude
+      //     terminal slot.
+      //  2. Reset the Anthropic Claude Code plugin's wrapper so its panel
+      //     uses local claude again (the plugin auto-applies the setting
+      //     change on the next claude invocation).
       if (exit === 0) {
         const auto = vscode.workspace
           .getConfiguration('moorpost')
           .get<boolean>('autoAttachOnHandoff', true);
         if (auto) {
-          // Pull the agent session id from the latest status so we can
-          // `claude --resume <id>`. Best effort — if missing, just open
-          // a fresh `claude` invocation; the user can pick from the
-          // session picker.
           const refreshed = await getStatus(cwd);
           openLocalClaude(cwd, refreshed?.agent_session_id);
         }
+        void routePluginToLocal();
       }
     }),
 

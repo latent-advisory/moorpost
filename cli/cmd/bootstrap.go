@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/latent-advisory/moorpost/cli/internal/agent/claudecode"
+	"github.com/latent-advisory/moorpost/cli/internal/claudewrapper"
 	"github.com/latent-advisory/moorpost/cli/internal/keychain"
 	"github.com/spf13/cobra"
 )
@@ -125,6 +126,16 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 		if err := stepShell(out, "provision", "provision", "--wait"); err != nil {
 			return fmt.Errorf("bootstrap: provision failed: %w", err)
 		}
+	}
+
+	// Step 5: install the Anthropic Claude Code plugin wrapper. Cheap, idempotent;
+	// makes the panel-UI integration work as soon as the user sets the plugin's
+	// `claudeCode.claudeProcessWrapper` setting (the moorpost extension does this
+	// automatically on handoff/return).
+	if path, err := claudewrapper.Install(); err != nil {
+		fmt.Fprintf(out, "\n→ claude-wrapper: install failed (non-fatal): %v\n", err)
+	} else {
+		fmt.Fprintf(out, "\n→ claude-wrapper: installed at %s\n", path)
 	}
 
 	fmt.Fprintln(out, "\n✓ Bootstrap complete.")
