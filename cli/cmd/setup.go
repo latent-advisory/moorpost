@@ -106,7 +106,12 @@ var allPrereqs = []prereq{
 		},
 	},
 	{
-		Bin: "ripgrep",
+		// Binary is `rg`, not `ripgrep` — the package name and the
+		// installed executable differ. Looking up "ripgrep" on PATH
+		// falsely flags the prereq as missing on systems where rg is
+		// already there, leading to a confusing "still not on PATH"
+		// warning after a successful brew install.
+		Bin: "rg",
 		Why: "Fast grep; bundled in the bootstrap and useful locally too",
 		Install: map[string][]string{
 			"darwin": {"brew", "install", "ripgrep"},

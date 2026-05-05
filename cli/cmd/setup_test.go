@@ -41,7 +41,7 @@ func TestRunSetupAllPresent(t *testing.T) {
 	err := RunSetup(context.Background(), &out, strings.NewReader(""), SetupOptions{
 		Yes:    true,
 		OS:     "darwin",
-		Lookup: stubLookup("node", "claude", "gcloud", "mutagen", "tmux", "ripgrep", "rsync"),
+		Lookup: stubLookup("node", "claude", "gcloud", "mutagen", "tmux", "rg", "rsync"),
 		Run:    runFn,
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func TestRunSetupOneMissingWithYes(t *testing.T) {
 	err := RunSetup(context.Background(), &out, strings.NewReader(""), SetupOptions{
 		Yes:    true,
 		OS:     "darwin",
-		Lookup: stubLookup("node", "claude", "gcloud", "tmux", "ripgrep", "rsync"), // mutagen missing
+		Lookup: stubLookup("node", "claude", "gcloud", "tmux", "rg", "rsync"), // mutagen missing
 		Run:    runFn,
 	})
 	if err != nil {
@@ -103,7 +103,7 @@ func TestRunSetupPromptDeclined(t *testing.T) {
 	runFn, calls := recordRunner()
 	err := RunSetup(context.Background(), &out, strings.NewReader("n\n"), SetupOptions{
 		OS:     "darwin",
-		Lookup: stubLookup("node", "claude", "gcloud", "mutagen", "tmux", "ripgrep", "rsync"),
+		Lookup: stubLookup("node", "claude", "gcloud", "mutagen", "tmux", "rg", "rsync"),
 		Run:    runFn,
 	})
 	if err != nil {
@@ -133,7 +133,7 @@ func TestRunSetupSkipsBinariesWithNoInstallCommand(t *testing.T) {
 	err := RunSetup(context.Background(), &out, strings.NewReader(""), SetupOptions{
 		Yes:    true,
 		OS:     "linux",
-		Lookup: stubLookup("node", "claude", "tmux", "ripgrep", "rsync"), // gcloud + mutagen missing
+		Lookup: stubLookup("node", "claude", "tmux", "rg", "rsync"), // gcloud + mutagen missing
 		Run:    runFn,
 	})
 	if err != nil {
