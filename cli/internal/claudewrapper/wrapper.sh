@@ -46,6 +46,14 @@ find_real_claude() {
 }
 
 fallback_local() {
+  # When invoked by the Anthropic plugin's claudeProcessWrapper hook,
+  # $1 is the real claude binary the plugin already resolved; just run
+  # what the plugin asked us to run. When invoked directly from a shell
+  # (e.g. `claude-wrapper --version`), $1 is a claude flag — fall back
+  # to a PATH probe.
+  if [[ $# -gt 0 ]] && [[ "$1" == /* ]] && [[ -x "$1" ]]; then
+    exec "$@"
+  fi
   local real
   if real="$(find_real_claude)"; then
     exec "$real" "$@"
@@ -79,6 +87,22 @@ active=$(jq -r --arg p "$match" '.projects[$p].active_side // "local"' "$STATE")
 vm_id=$(jq -r --arg p "$match" '.projects[$p].vm_id // ""' "$STATE")
 vm_ip=$(jq -r --arg v "$vm_id" '.vms[$v].external_ip // ""' "$STATE")
 [[ -n "$vm_ip" ]] || fallback_local "$@"
+
+# Anthropic's plugin invokes `wrapper <localClaudeBinaryPath> [args]`,
+# or in node-module mode `wrapper <nodePath> <cli.js> [args]`. We need
+# to drop the binary-path prefix(es) before forwarding to remote
+# (where remote claude is its own install). Heuristic: skip args that
+# look like absolute file paths to existing files until we hit
+# something that doesn't (claude's actual flags).
+skip=0
+for arg in "$@"; do
+  if [[ "$arg" == /* && -e "$arg" ]]; then
+    skip=$((skip + 1))
+  else
+    break
+  fi
+done
+shift "$skip" 2>/dev/null || true
 
 # Compose the remote command. The bootstrap script's abs-path symlink
 # means $PWD on the local machine resolves to a valid path on the

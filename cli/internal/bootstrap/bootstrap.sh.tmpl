@@ -129,6 +129,19 @@ if [ -n "$LOCAL_ABS_PATH" ]; then
 fi
 
 # --------------------------------------------------------------------------
+# 6a. Claude session-state dir (pre-created so handoff's session-state
+# rsync doesn't fail on first run with "mkdir failed: No such file or
+# directory" — rsync only auto-creates one level, and ~/.claude/projects/
+# wouldn't exist until claude is run on the VM at least once).
+# --------------------------------------------------------------------------
+echo "[moorpost] step 6a: ~/.claude/projects scaffold"
+REMOTE_HOME_FOR_CLAUDE="$(getent passwd "{{.RemoteUser}}" | cut -d: -f6)"
+[ -n "$REMOTE_HOME_FOR_CLAUDE" ] || REMOTE_HOME_FOR_CLAUDE="/home/{{.RemoteUser}}"
+install -d -o "{{.RemoteUser}}" -g "{{.RemoteUser}}" -m 0755 \
+    "$REMOTE_HOME_FOR_CLAUDE/.claude" \
+    "$REMOTE_HOME_FOR_CLAUDE/.claude/projects"
+
+# --------------------------------------------------------------------------
 # 6. /etc/moorpost/env (skeleton; populated later by `moorpost handoff`)
 # --------------------------------------------------------------------------
 # Owned by the remote user so `moorpost handoff` can write the env file

@@ -80,7 +80,7 @@ func TestRunReturnPreferLocalAbortsOnDivergence(t *testing.T) {
 	// Run handoff to set the watermark.
 	var out bytes.Buffer
 	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c,
-		HandoffOptions{SkipPrompt: true}); err != nil {
+		HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
 		t.Fatalf("seed handoff: %v", err)
 	}
 
@@ -125,7 +125,7 @@ func TestRunReturnPreferRemoteProceedsOnDivergence(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c,
-		HandoffOptions{SkipPrompt: true}); err != nil {
+		HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
 		t.Fatalf("seed handoff: %v", err)
 	}
 	st, _ := state.Open(c.StatePath)
@@ -172,7 +172,7 @@ func TestRunReturnNoFlagsNoDivergence_UpdatesWatermark(t *testing.T) {
 
 	var out bytes.Buffer
 	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c,
-		HandoffOptions{SkipPrompt: true}); err != nil {
+		HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
 		t.Fatalf("seed handoff: %v", err)
 	}
 

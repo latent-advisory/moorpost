@@ -106,8 +106,9 @@ func TestE2EMockHappyPath(t *testing.T) {
 	var handoffOut bytes.Buffer
 	fixedHandoff := time.Date(2026, 5, 4, 22, 0, 0, 0, time.UTC)
 	if err := RunHandoff(context.Background(), &handoffOut, strings.NewReader(""), ctx, HandoffOptions{
-		SkipPrompt: true,
-		Now:        func() time.Time { return fixedHandoff },
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		Now:         func() time.Time { return fixedHandoff },
 	}); err != nil {
 		t.Fatalf("handoff: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestE2EMockHandoffWithoutProvisionFails(t *testing.T) {
 		Sync:       &cmdFakeSync{},
 	}
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), ctx, HandoffOptions{SkipPrompt: true})
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), ctx, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if err == nil || !strings.Contains(err.Error(), "not provisioned") {
 		t.Errorf("err = %v, want 'not provisioned'", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -74,6 +75,10 @@ type HandoffOptions struct {
 	Now func() time.Time
 	// IPWaitTimeout overrides the default 60s.
 	IPWaitTimeout time.Duration
+	// SkipSSHWait skips the post-Start TCP poll that waits for sshd to
+	// accept connections. Set by tests against fakes that don't open a
+	// real TCP listener; production callers leave it false.
+	SkipSSHWait bool
 }
 
 // RunHandoff executes the full local→remote handoff flow.
@@ -159,8 +164,10 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	// gap. Without this poll, the next step (InjectCredential) hits
 	// "ssh: connect to host ... port 22: Operation timed out". Poll
 	// the OS-level TCP handshake until 22/tcp is open, capped at 90s.
-	if err := waitForSSH(ctx, out, tgt.Host, tgt.Port, 90*time.Second); err != nil {
-		return fmt.Errorf("handoff: %w", err)
+	if !opts.SkipSSHWait {
+		if err := waitForSSH(ctx, out, tgt.Host, tgt.Port, 90*time.Second); err != nil {
+			return fmt.Errorf("handoff: %w", err)
+		}
 	}
 
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
@@ -193,6 +200,21 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		}
 
 		remoteState := remoteSessionStateFor(c)
+		// Pre-create the remote session-state dir's parent. rsync only
+		// auto-creates one level; without this, the very first handoff
+		// fails with "mkdir failed: No such file or directory" because
+		// ~/.claude/projects/ doesn't exist yet on a fresh VM. Without
+		// the session state actually landing, remote `claude --resume`
+		// starts with an empty conversation — the user's "fork to
+		// remote" intent is silently dropped. Best-effort: errors here
+		// are non-fatal, the rsync below will produce a clearer one.
+		// Gated on SkipSSHWait so tests against fakes don't try to
+		// shell out to a real ssh against a fake host.
+		if !opts.SkipSSHWait {
+			if err := ensureRemoteDir(ctx, hostFromTarget(tgt), tgt.IdentityFile, remoteState); err != nil {
+				fmt.Fprintf(out, "warning: could not pre-create %s: %v\n", remoteState, err)
+			}
+		}
 		fmt.Fprintf(out, "Syncing agent session state → %s ...\n", tgt.Host)
 		if err := c.Sync.OneShot(ctx,
 			mpsync.Endpoint{Path: localState + "/"},
@@ -287,6 +309,27 @@ func waitForIP(ctx context.Context, p provider.Provider, vmID string, timeout ti
 			}
 		}
 	}
+}
+
+// ensureRemoteDir runs `mkdir -p` over SSH to make sure the remote path
+// exists before any rsync target it. Best-effort: returns the SSH error
+// so callers can decide whether to surface it; the typical caller treats
+// failure as non-fatal (rsync below will emit a clearer error).
+func ensureRemoteDir(ctx context.Context, sshHost, identityFile, remotePath string) error {
+	if sshHost == "" || remotePath == "" {
+		return nil
+	}
+	args := []string{
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=15",
+		"-o", "StrictHostKeyChecking=accept-new",
+	}
+	if identityFile != "" {
+		args = append(args, "-i", identityFile)
+	}
+	args = append(args, sshHost, "--", "mkdir", "-p", remotePath)
+	cmd := exec.CommandContext(ctx, "ssh", args...) // #nosec G204 — args are static + provider data
+	return cmd.Run()
 }
 
 // waitForSSH polls the VM's 22/tcp until it accepts connections, or until

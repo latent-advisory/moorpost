@@ -136,7 +136,8 @@ func TestRunHandoffHappyPath(t *testing.T) {
 	var out bytes.Buffer
 	fixedNow := time.Date(2026, 5, 4, 21, 0, 0, 0, time.UTC)
 	err := RunHandoff(context.Background(), &out, strings.NewReader("y\n"), c, HandoffOptions{
-		Now: func() time.Time { return fixedNow },
+		Now:         func() time.Time { return fixedNow },
+		SkipSSHWait: true,
 	})
 	if err != nil {
 		t.Fatalf("RunHandoff: %v", err)
@@ -175,7 +176,7 @@ func TestRunHandoffRejectsAlreadyRemote(t *testing.T) {
 	fs := &cmdFakeSync{}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if err == nil || !strings.Contains(err.Error(), "already remote") {
 		t.Errorf("err = %v, want 'already remote'", err)
 	}
@@ -201,7 +202,7 @@ func TestRunHandoffStartFailure(t *testing.T) {
 	fp := &fakeProvider{startErr: myErr, sshTarget: provider.SSHTarget{Host: "h"}}
 	c := makeHandoffContext(t, fp, &cmdFakeAgent{}, &cmdFakeSync{}, state.SideLocal)
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if !errors.Is(err, myErr) {
 		t.Errorf("err = %v, want wrap %v", err, myErr)
 	}
@@ -213,7 +214,7 @@ func TestRunHandoffNoProject(t *testing.T) {
 	c.Agent = &cmdFakeAgent{}
 	c.Sync = &cmdFakeSync{}
 	var out bytes.Buffer
-	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err == nil {
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err == nil {
 		t.Error("RunHandoff accepted unprovisioned project")
 	}
 }
@@ -278,7 +279,7 @@ func TestRunHandoffStartSessionFailure(t *testing.T) {
 	fs := &cmdFakeSync{startErr: errors.New("mutagen daemon not running")}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if err == nil || !strings.Contains(err.Error(), "start sync session") {
 		t.Errorf("err = %v, want 'start sync session'", err)
 	}
@@ -425,6 +426,7 @@ func TestRunHandoffRejectsBothPreferFlags(t *testing.T) {
 	var out bytes.Buffer
 	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
 		SkipPrompt:   true,
+		SkipSSHWait:  true,
 		PreferLocal:  true,
 		PreferRemote: true,
 	})
@@ -460,7 +462,7 @@ func TestRunHandoffWritesWatermarkOnFirstHandoff(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true})
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if err != nil {
 		t.Fatalf("first handoff: %v", err)
 	}
@@ -490,7 +492,7 @@ func TestRunHandoffPreferRemoteAbortsOnDivergence(t *testing.T) {
 
 	// First handoff: succeeds, watermark gets set.
 	var out bytes.Buffer
-	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err != nil {
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
 		t.Fatalf("first handoff: %v", err)
 	}
 	// Reset for second handoff: state shows ActiveSide=local again.
@@ -510,6 +512,7 @@ func TestRunHandoffPreferRemoteAbortsOnDivergence(t *testing.T) {
 	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
 		SkipPrompt:   true,
 		PreferRemote: true,
+		SkipSSHWait:  true,
 	})
 	if err == nil {
 		t.Fatal("expected --prefer-remote to abort on local divergence")
@@ -537,7 +540,7 @@ func TestRunHandoffPreferLocalProceedsOnDivergence(t *testing.T) {
 	_ = osWriteFileForTest(sessionDir+"/v1.json", []byte(`{"v":1}`))
 
 	var out bytes.Buffer
-	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true}); err != nil {
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
 		t.Fatalf("first handoff: %v", err)
 	}
 	st, _ := state.Open(c.StatePath)
@@ -557,6 +560,7 @@ func TestRunHandoffPreferLocalProceedsOnDivergence(t *testing.T) {
 	out.Reset()
 	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
 		SkipPrompt:  true,
+		SkipSSHWait: true,
 		PreferLocal: true,
 	}); err != nil {
 		t.Fatalf("--prefer-local handoff: %v", err)
