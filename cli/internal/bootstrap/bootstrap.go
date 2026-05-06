@@ -17,12 +17,12 @@ var rawTemplate string
 
 // BootstrapVars are the values substituted into the script template.
 type BootstrapVars struct {
-	// ProjectSlug is the project's lower-cased identifier (e.g. "argus").
+	// ProjectSlug is the project's lower-cased identifier (e.g. "webapp").
 	// Required.
 	ProjectSlug string
 
 	// LocalAbsPath is the absolute path of the project on the user's local
-	// machine (e.g. "/Users/x/argus"). Used to install a symlink on the
+	// machine (e.g. "/Users/x/webapp"). Used to install a symlink on the
 	// remote so the encoded session-state path matches local. Required.
 	LocalAbsPath string
 

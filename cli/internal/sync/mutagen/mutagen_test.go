@@ -74,17 +74,17 @@ func TestStartSessionBuildsArgs(t *testing.T) {
 	c := &captureExec{}
 	e := newEngine(t, c)
 	id, err := e.StartSession(context.Background(), mpsync.SyncSpec{
-		Label: "argus-sync",
-		Alpha: mpsync.Endpoint{Path: "/Users/x/argus"},
-		Beta:  mpsync.Endpoint{SSHHost: "argus-vm", Path: "/home/x/argus"},
+		Label: "webapp-sync",
+		Alpha: mpsync.Endpoint{Path: "/Users/x/webapp"},
+		Beta:  mpsync.Endpoint{SSHHost: "webapp-vm", Path: "/home/x/webapp"},
 		ConflictPolicy: "alpha-wins",
 		IgnorePatterns: []string{"**/node_modules", "**/.venv"},
 	})
 	if err != nil {
 		t.Fatalf("StartSession: %v", err)
 	}
-	if id != "argus-sync" {
-		t.Errorf("session id = %q, want argus-sync", id)
+	if id != "webapp-sync" {
+		t.Errorf("session id = %q, want webapp-sync", id)
 	}
 	if len(c.calls) != 1 {
 		t.Fatalf("expected 1 exec call, got %d", len(c.calls))
@@ -94,13 +94,13 @@ func TestStartSessionBuildsArgs(t *testing.T) {
 		{"sync", "subcommand"},
 		{"create", "subcommand"},
 		{"--name", "name flag"},
-		{"argus-sync", "name value"},
+		{"webapp-sync", "name value"},
 		{"--mode", "mode flag"},
 		{"two-way-resolved", "mapped mode"},
 		{"--ignore", "ignore flag"},
 		{"**/node_modules", "ignore pattern"},
-		{"/Users/x/argus", "alpha local path"},
-		{"argus-vm:/home/x/argus", "beta remote URL"},
+		{"/Users/x/webapp", "alpha local path"},
+		{"webapp-vm:/home/x/webapp", "beta remote URL"},
 	}
 	for _, w := range wantContains {
 		if !argsContain(args, w[0]) {
@@ -282,7 +282,7 @@ func TestOneShotLocalToRemote(t *testing.T) {
 	e := newEngine(t, c)
 	err := e.OneShot(context.Background(),
 		mpsync.Endpoint{Path: "/local/state/"},
-		mpsync.Endpoint{SSHHost: "argus-vm", Path: "/remote/state/"},
+		mpsync.Endpoint{SSHHost: "webapp-vm", Path: "/remote/state/"},
 		mpsync.DirectionLocalToRemote)
 	if err != nil {
 		t.Fatalf("OneShot: %v", err)
@@ -297,7 +297,7 @@ func TestOneShotLocalToRemote(t *testing.T) {
 	if !argsContain(args, "/local/state/") {
 		t.Errorf("args missing src: %v", args)
 	}
-	if !argsContain(args, "argus-vm:/remote/state/") {
+	if !argsContain(args, "webapp-vm:/remote/state/") {
 		t.Errorf("args missing remote dst: %v", args)
 	}
 	// -e flag for SSH should be present when at least one side is remote.
@@ -317,14 +317,14 @@ func TestOneShotRemoteToLocal(t *testing.T) {
 	c := &captureExec{resp: []captureCall{{exitCode: 0}}}
 	e := newEngine(t, c)
 	err := e.OneShot(context.Background(),
-		mpsync.Endpoint{SSHHost: "argus-vm", Path: "/remote/state/"},
+		mpsync.Endpoint{SSHHost: "webapp-vm", Path: "/remote/state/"},
 		mpsync.Endpoint{Path: "/local/state/"},
 		mpsync.DirectionRemoteToLocal)
 	if err != nil {
 		t.Fatalf("OneShot: %v", err)
 	}
 	args := c.calls[0].args
-	if !argsContain(args, "argus-vm:/remote/state/") {
+	if !argsContain(args, "webapp-vm:/remote/state/") {
 		t.Errorf("args missing remote src: %v", args)
 	}
 	if !argsContain(args, "/local/state/") {
@@ -407,7 +407,7 @@ func TestListConflicts_NoConflicts_EmptyArray(t *testing.T) {
 		resp: []captureCall{{stdout: []byte(`[{"conflicts": []}]`), exitCode: 0}},
 	}
 	e := newEngine(t, c)
-	got, err := e.ListConflicts(context.Background(), "argus-sync")
+	got, err := e.ListConflicts(context.Background(), "webapp-sync")
 	if err != nil {
 		t.Fatalf("ListConflicts: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestListConflicts_NoConflicts_EmptyArray(t *testing.T) {
 	if len(c.calls) != 1 {
 		t.Fatalf("expected 1 call, got %d", len(c.calls))
 	}
-	for _, want := range []string{"sync", "list", "argus-sync", "--json"} {
+	for _, want := range []string{"sync", "list", "webapp-sync", "--json"} {
 		if !argsContain(c.calls[0].args, want) {
 			t.Errorf("call missing arg %q: %v", want, c.calls[0].args)
 		}
@@ -447,7 +447,7 @@ func TestListConflicts_GenericExitFailure(t *testing.T) {
 		}},
 	}
 	e := newEngine(t, c)
-	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	_, err := e.ListConflicts(context.Background(), "webapp-sync")
 	if err == nil {
 		t.Fatal("expected error on non-zero exit")
 	}
@@ -461,7 +461,7 @@ func TestListConflicts_EmptyStdout_ReturnsErrSessionNotFound(t *testing.T) {
 		resp: []captureCall{{stdout: []byte(""), exitCode: 0}},
 	}
 	e := newEngine(t, c)
-	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	_, err := e.ListConflicts(context.Background(), "webapp-sync")
 	if !errors.Is(err, mpsync.ErrSessionNotFound) {
 		t.Errorf("empty stdout: err = %v, want ErrSessionNotFound", err)
 	}
@@ -472,7 +472,7 @@ func TestListConflicts_MalformedJSON(t *testing.T) {
 		resp: []captureCall{{stdout: []byte("not-json"), exitCode: 0}},
 	}
 	e := newEngine(t, c)
-	_, err := e.ListConflicts(context.Background(), "argus-sync")
+	_, err := e.ListConflicts(context.Background(), "webapp-sync")
 	if err == nil {
 		t.Fatal("expected parse error for malformed JSON")
 	}

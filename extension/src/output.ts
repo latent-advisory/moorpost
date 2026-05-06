@@ -19,6 +19,15 @@ function getChannel(): vscode.OutputChannel {
   return channel;
 }
 
+/** Public accessor: lets command handlers write diagnostic lines to the
+ * shared "Moorpost" OutputChannel. Useful when a flow has multiple gates
+ * (surface detection, baton presence, popup choice) and we need to show
+ * the user *why* a popup did or didn't fire — DevTools console requires
+ * Help → Toggle Developer Tools, but Output → "Moorpost" is one click. */
+export function logToChannel(line: string): void {
+  getChannel().appendLine(`[${new Date().toISOString()}] ${line}`);
+}
+
 export interface RunOptions {
   cwd?: string;
   /** Title shown in the progress notification. */

@@ -162,7 +162,7 @@ type CostBreakdown struct {
 type SSHTarget struct {
 	Host string // hostname or IP
 	Port int    // typically 22
-	User string // OS login user (e.g. "landytang")
+	User string // OS login user (e.g. "alice")
 	// IdentityFile is the path to the SSH private key the user should
 	// authenticate with. Empty means "rely on ssh's default identity
 	// resolution" (~/.ssh/id_*, ssh-agent). Set by providers that

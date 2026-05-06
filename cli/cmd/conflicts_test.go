@@ -49,7 +49,7 @@ func TestRunConflicts_NoSession_PrintsHint(t *testing.T) {
 
 func TestRunConflicts_Clean_PrintsCheckmark(t *testing.T) {
 	fs := &cmdFakeSync{conflicts: nil}
-	c := makeConflictsContext(t, fs, "argus-sync")
+	c := makeConflictsContext(t, fs, "webapp-sync")
 	var out bytes.Buffer
 	if err := RunConflicts(context.Background(), &out, c, false); err != nil {
 		t.Fatalf("clean session should succeed; got %v", err)
@@ -58,7 +58,7 @@ func TestRunConflicts_Clean_PrintsCheckmark(t *testing.T) {
 	if !strings.Contains(got, "No conflicts") {
 		t.Errorf("clean output missing expected text; got:\n%s", got)
 	}
-	if !strings.Contains(got, "argus-sync") {
+	if !strings.Contains(got, "webapp-sync") {
 		t.Errorf("output missing session id; got:\n%s", got)
 	}
 }
@@ -73,14 +73,14 @@ func TestRunConflicts_WithConflicts_ReturnsErrConflictsPresent(t *testing.T) {
 			BetaModifiedAt:  time.Date(2026, 5, 4, 10, 30, 0, 0, time.UTC),
 		},
 	}}
-	c := makeConflictsContext(t, fs, "argus-sync")
+	c := makeConflictsContext(t, fs, "webapp-sync")
 	var out bytes.Buffer
 	err := RunConflicts(context.Background(), &out, c, false)
 	if !errors.Is(err, ErrConflictsPresent) {
 		t.Fatalf("err = %v, want ErrConflictsPresent", err)
 	}
 	got := out.String()
-	for _, want := range []string{"argus-sync", "src/main.go", "modified", "1 unresolved"} {
+	for _, want := range []string{"webapp-sync", "src/main.go", "modified", "1 unresolved"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q; got:\n%s", want, got)
 		}
@@ -102,7 +102,7 @@ func TestRunConflicts_SessionNotFound_FriendlyMessage(t *testing.T) {
 
 func TestRunConflicts_GenericError_Propagates(t *testing.T) {
 	fs := &cmdFakeSync{listConflictsErr: errors.New("connection lost")}
-	c := makeConflictsContext(t, fs, "argus-sync")
+	c := makeConflictsContext(t, fs, "webapp-sync")
 	var out bytes.Buffer
 	err := RunConflicts(context.Background(), &out, c, false)
 	if err == nil {
@@ -115,7 +115,7 @@ func TestRunConflicts_GenericError_Propagates(t *testing.T) {
 
 func TestRunConflicts_JSON_Clean(t *testing.T) {
 	fs := &cmdFakeSync{conflicts: nil}
-	c := makeConflictsContext(t, fs, "argus-sync")
+	c := makeConflictsContext(t, fs, "webapp-sync")
 	var out bytes.Buffer
 	if err := RunConflicts(context.Background(), &out, c, true); err != nil {
 		t.Fatalf("err = %v", err)
@@ -124,8 +124,8 @@ func TestRunConflicts_JSON_Clean(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
 		t.Fatalf("parse JSON: %v\nbody: %s", err, out.String())
 	}
-	if got.Session != "argus-sync" {
-		t.Errorf("session = %q, want argus-sync", got.Session)
+	if got.Session != "webapp-sync" {
+		t.Errorf("session = %q, want webapp-sync", got.Session)
 	}
 	if len(got.Conflicts) != 0 {
 		t.Errorf("expected 0 conflicts in JSON, got %d", len(got.Conflicts))
@@ -137,7 +137,7 @@ func TestRunConflicts_JSON_Clean(t *testing.T) {
 
 func TestRunConflicts_JSON_WithConflicts_ReturnsErr(t *testing.T) {
 	fs := &cmdFakeSync{conflicts: []mpsync.Conflict{{Path: "f.txt", AlphaKind: mpsync.ChangeKindModified}}}
-	c := makeConflictsContext(t, fs, "argus-sync")
+	c := makeConflictsContext(t, fs, "webapp-sync")
 	var out bytes.Buffer
 	err := RunConflicts(context.Background(), &out, c, true)
 	// Both human and JSON paths return ErrConflictsPresent when conflicts

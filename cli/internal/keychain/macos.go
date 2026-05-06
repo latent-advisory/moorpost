@@ -28,20 +28,27 @@ func (m *macKeychain) Store(service, account string, secret []byte) error {
 	if err := validateServiceAccount(service, account); err != nil {
 		return err
 	}
-	// -U: update existing entry if present.
-	// -w "": tells security we'll pipe the secret on stdin? Actually
-	// `security add-generic-password` requires `-w <secret>` on the cmdline.
-	// To avoid leaking via process listings, we pass via stdin only when
-	// supported; falling back to argv on older macOS releases.
+	// `security add-generic-password -w <password>` takes the secret as a
+	// literal argv value. There is no stdin-redirection mode (a previous
+	// version of this code passed `-w "-"` and piped via stdin, but
+	// security(1) does not honor `-` as a stdin sentinel — it stored the
+	// literal `-` instead, silently corrupting every saved credential).
 	//
-	// 2026 macOS supports `-w` reading from stdin if the value is "-".
+	// Tradeoff: the secret is briefly visible to other processes via
+	// `ps`/`/proc/<pid>/cmdline` on macOS for the few milliseconds the
+	// security process is alive. Acceptable for a single-user dev
+	// machine; matches what git-credential-osxkeychain and similar tools
+	// do. If we ever need stronger isolation, the path is the Security
+	// framework via Cgo (e.g. SecKeychainAddGenericPassword), not stdin.
+	//
+	// -U: update existing entry if present (otherwise security errors
+	// with "already exists" instead of overwriting).
 	cmd := exec.Command("security", "add-generic-password",
 		"-U",
 		"-s", service,
 		"-a", account,
-		"-w", "-",
+		"-w", string(secret),
 	)
-	cmd.Stdin = bytes.NewReader(secret)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

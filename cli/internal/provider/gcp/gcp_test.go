@@ -53,10 +53,10 @@ func newProvider(t *testing.T, c *captureExec) *engine {
 	p, err := NewWithOptions(Options{
 		Executor: c,
 		Binary:   "gcloud",
-		Project:  "latent-advisory",
+		Project:  "example-project",
 		Region:   "us-central1",
 		Zone:     "us-central1-a",
-		SSHUser:  "landytang",
+		SSHUser:  "alice",
 	})
 	if err != nil {
 		t.Fatalf("NewWithOptions: %v", err)
@@ -115,21 +115,21 @@ func TestProvisionArgvAssembly(t *testing.T) {
 	c := &captureExec{resp: []captureCall{{exitCode: 0, stdout: []byte("NAME ZONE ... 10.0.0.1 35.1.2.3 RUNNING\n")}}}
 	p := newProvider(t, c)
 	vm, err := p.Provision(context.Background(), provider.ProvisionSpec{
-		Name:             "argus-vm",
+		Name:             "webapp-vm",
 		Zone:             "us-central1-a",
 		MachineType:      "e2-standard-2",
 		DiskGB:           100,
 		DiskType:         "pd-standard",
 		Image:            "ubuntu-2404-lts-amd64",
 		SSHKeyPub:        "ssh-ed25519 AAAA...",
-		Tags:             []string{"moorpost", "argus"},
+		Tags:             []string{"moorpost", "webapp"},
 		StartImmediately: true,
 		BootstrapScript:  "#!/bin/bash\necho hi\n",
 	})
 	if err != nil {
 		t.Fatalf("Provision: %v", err)
 	}
-	if vm.ID != "argus-vm" {
+	if vm.ID != "webapp-vm" {
 		t.Errorf("vm.ID = %q", vm.ID)
 	}
 	if vm.Provider != "gcp" {
@@ -147,11 +147,11 @@ func TestProvisionArgvAssembly(t *testing.T) {
 
 	args := c.calls[0].args
 	for _, want := range []string{
-		"compute", "instances", "create", "argus-vm",
+		"compute", "instances", "create", "webapp-vm",
 		"e2-standard-2", "100GB", "pd-standard",
 		"ubuntu-2404-lts-amd64", "ubuntu-os-cloud",
-		"latent-advisory", "us-central1-a",
-		"moorpost,argus",
+		"example-project", "us-central1-a",
+		"moorpost,webapp",
 	} {
 		if !argsContain(args, want) {
 			t.Errorf("args missing %q:\n%v", want, args)
@@ -328,7 +328,7 @@ func TestSSHTarget(t *testing.T) {
 	if tgt.Port != 22 {
 		t.Errorf("Port = %d", tgt.Port)
 	}
-	if tgt.User != "landytang" {
+	if tgt.User != "alice" {
 		t.Errorf("User = %q", tgt.User)
 	}
 }
@@ -346,7 +346,7 @@ func TestSnapshotLabelSanitization(t *testing.T) {
 		in, want string
 	}{
 		{"My_Pre Handoff!", "my-pre-handoff"},
-		{"argus", "argus"},
+		{"webapp", "webapp"},
 		{"--leading", "leading"},
 		{"trailing--", "trailing"},
 		{"UPPERCASE", "uppercase"},
@@ -366,15 +366,15 @@ func TestSnapshotLabelSanitization(t *testing.T) {
 func TestSnapshotIssuesCommand(t *testing.T) {
 	c := &captureExec{resp: []captureCall{{exitCode: 0}}}
 	p := newProvider(t, c)
-	id, err := p.Snapshot(context.Background(), "argus-vm", "Pre Handoff")
+	id, err := p.Snapshot(context.Background(), "webapp-vm", "Pre Handoff")
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
-	if !strings.HasPrefix(string(id), "argus-vm-pre-handoff-") {
-		t.Errorf("snapshot id = %q, want argus-vm-pre-handoff-<stamp>", id)
+	if !strings.HasPrefix(string(id), "webapp-vm-pre-handoff-") {
+		t.Errorf("snapshot id = %q, want webapp-vm-pre-handoff-<stamp>", id)
 	}
 	args := c.calls[0].args
-	for _, want := range []string{"compute", "disks", "snapshot", "argus-vm", "--snapshot-names"} {
+	for _, want := range []string{"compute", "disks", "snapshot", "webapp-vm", "--snapshot-names"} {
 		if !argsContain(args, want) {
 			t.Errorf("args missing %q: %v", want, args)
 		}

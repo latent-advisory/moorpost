@@ -1,6 +1,8 @@
 module github.com/latent-advisory/moorpost/cli
 
-go 1.19
+go 1.21.0
+
+toolchain go1.22.2
 
 require (
 	github.com/gofrs/flock v0.12.1 // indirect

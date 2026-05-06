@@ -99,8 +99,8 @@ func TestBuildIdleMonitorUnits_BashSyntax(t *testing.T) {
 
 func TestRender_OmitsIdleInstall_WhenZero(t *testing.T) {
 	out, err := Render(BootstrapVars{
-		ProjectSlug:         "argus",
-		LocalAbsPath:        "/Users/x/argus",
+		ProjectSlug:         "webapp",
+		LocalAbsPath:        "/Users/x/webapp",
 		IdleAutoStopMinutes: 0,
 	})
 	if err != nil {
@@ -119,8 +119,8 @@ func TestRender_OmitsIdleInstall_WhenZero(t *testing.T) {
 
 func TestRender_IncludesIdleInstall_WhenNonZero(t *testing.T) {
 	out, err := Render(BootstrapVars{
-		ProjectSlug:         "argus",
-		LocalAbsPath:        "/Users/x/argus",
+		ProjectSlug:         "webapp",
+		LocalAbsPath:        "/Users/x/webapp",
 		IdleAutoStopMinutes: 60,
 	})
 	if err != nil {
@@ -149,8 +149,8 @@ func TestRender_BashSyntax_WithIdleMonitor(t *testing.T) {
 		t.Skip("bash not on PATH; skipping syntax check")
 	}
 	out, err := Render(BootstrapVars{
-		ProjectSlug:         "argus",
-		LocalAbsPath:        "/Users/x/argus",
+		ProjectSlug:         "webapp",
+		LocalAbsPath:        "/Users/x/webapp",
 		IdleAutoStopMinutes: 60,
 	})
 	if err != nil {

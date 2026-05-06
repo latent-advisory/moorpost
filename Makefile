@@ -5,7 +5,7 @@
         extension-install extension-build extension-package help
 
 # Default GCP project for E2E tests; override with: make e2e-autostop GCP_PROJECT=...
-GCP_PROJECT ?= latent-advisory
+GCP_PROJECT ?= example-project
 
 CLI := cli
 BIN := moorpost

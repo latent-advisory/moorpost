@@ -32,8 +32,8 @@ func TestE2EMockHappyPath(t *testing.T) {
 	var initOut bytes.Buffer
 	if err := RunInit(&initOut, InitOptions{
 		Dir:        projectDir,
-		Slug:       "argus",
-		GCPProject: "latent-advisory",
+		Slug:       "webapp",
+		GCPProject: "example-project",
 	}); err != nil {
 		t.Fatalf("init: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestE2EMockHappyPath(t *testing.T) {
 		sshTarget: provider.SSHTarget{Host: "35.1.2.3", Port: 22, User: "u"},
 	}
 	fa := &cmdFakeAgent{
-		authResult:       agent.Credential{EnvVar: "TOKEN", Value: "x", Kind: "k"},
+		authResult:       agent.Credential{EnvVar: "TOKEN", Value: "sk-ant-oat01-test-fixture-token", Kind: "k"},
 		sessionStateRoot: t.TempDir(),
 	}
 	fs := &cmdFakeSync{}
@@ -92,22 +92,26 @@ func TestE2EMockHappyPath(t *testing.T) {
 	}
 	st1, _ := state.Open(statePath)
 	ps, ok := st1.GetProject(projectDir)
-	if !ok || ps.VMID != "argus-vm" {
+	if !ok || ps.VMID != "webapp-vm" {
 		t.Fatalf("project state after provision: ok=%v ps=%+v", ok, ps)
 	}
-	if st1.VMs["argus-vm"].StateCache != "stopped" {
-		t.Errorf("VM state cache = %q, want stopped (local-first default)", st1.VMs["argus-vm"].StateCache)
+	if st1.VMs["webapp-vm"].StateCache != "stopped" {
+		t.Errorf("VM state cache = %q, want stopped (local-first default)", st1.VMs["webapp-vm"].StateCache)
 	}
 
 	// Refresh the in-memory state on the context (mirrors what real flow does).
 	ctx.State, _ = state.Open(statePath)
 
 	// 4) handoff — Start, Inject, OneShot×2, Resume; ActiveSide=remote.
+	// Per-session routing: only --new-session flips ActiveSide=remote
+	// (per-SID handoffs leave the project default alone). The full
+	// lifecycle test mimics the "fresh spawn defaults remote" path.
 	var handoffOut bytes.Buffer
 	fixedHandoff := time.Date(2026, 5, 4, 22, 0, 0, 0, time.UTC)
 	if err := RunHandoff(context.Background(), &handoffOut, strings.NewReader(""), ctx, HandoffOptions{
 		SkipPrompt:  true,
 		SkipSSHWait: true,
+		NewSession:  true,
 		Now:         func() time.Time { return fixedHandoff },
 	}); err != nil {
 		t.Fatalf("handoff: %v", err)
@@ -177,7 +181,7 @@ func TestE2EMockHappyPath(t *testing.T) {
 	if _, ok := st4.GetProject(projectDir); ok {
 		t.Error("project should be cleared from state after destroy")
 	}
-	if _, ok := st4.VMs["argus-vm"]; ok {
+	if _, ok := st4.VMs["webapp-vm"]; ok {
 		t.Error("VM record should be cleared from state after destroy")
 	}
 
@@ -193,7 +197,7 @@ func TestE2EMockHandoffWithoutProvisionFails(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 
 	var initOut bytes.Buffer
-	if err := RunInit(&initOut, InitOptions{Dir: projectDir, Slug: "argus", GCPProject: "p"}); err != nil {
+	if err := RunInit(&initOut, InitOptions{Dir: projectDir, Slug: "webapp", GCPProject: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _ := config.Load(filepath.Join(projectDir, ".moorpost", "config.yaml"))
@@ -235,7 +239,7 @@ func TestE2EMockStatusAfterDestroyDoesntCrash(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "state.json")
 
 	var initOut bytes.Buffer
-	if err := RunInit(&initOut, InitOptions{Dir: projectDir, Slug: "argus", GCPProject: "p"}); err != nil {
+	if err := RunInit(&initOut, InitOptions{Dir: projectDir, Slug: "webapp", GCPProject: "p"}); err != nil {
 		t.Fatal(err)
 	}
 	cfg, _ := config.Load(filepath.Join(projectDir, ".moorpost", "config.yaml"))
@@ -251,7 +255,7 @@ func TestE2EMockStatusAfterDestroyDoesntCrash(t *testing.T) {
 	if err := RunStatus(&out, ctx, false); err != nil {
 		t.Errorf("status crashed without provisioned project: %v", err)
 	}
-	if !strings.Contains(out.String(), "argus") {
+	if !strings.Contains(out.String(), "webapp") {
 		t.Errorf("status output should still have project info: %q", out.String())
 	}
 }

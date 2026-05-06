@@ -306,30 +306,68 @@ func (e *engine) Start(ctx context.Context, vmID string) error {
 	if vmID == "" {
 		return errors.New("gcp.Start: vmID required")
 	}
+	// Retry on the "fingerprint changed during the start operation"
+	// error. This happens when the VM is still in STOPPING state from
+	// a recent (async) Stop call: gcloud's start request races with
+	// the in-flight stop and GCE rejects it because the resource's
+	// fingerprint is mid-transition. Waiting and retrying once the
+	// stop has completed (VM → TERMINATED) lets the start succeed.
+	//
+	// Common when the user returns then quickly handoffs again. Without
+	// retry, handoff fails with a confusing GCE-internal message; with
+	// retry, the user sees a brief "waiting for VM to settle" and the
+	// handoff proceeds normally.
+	const maxAttempts = 6 // 6 attempts × ~10s = up to ~60s of stop-transition tolerance
 	args := e.gcloudArgs("compute", "instances", "start", vmID, "--zone", e.zone)
-	_, stderr, code, err := e.exec.Run(ctx, e.binary, args, nil)
-	if err != nil {
-		return fmt.Errorf("gcloud start: %w", err)
-	}
-	if code != 0 {
-		stderrStr := string(stderr)
-		// "is already running" → idempotent
+	var stderrStr string
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		_, stderr, code, err := e.exec.Run(ctx, e.binary, args, nil)
+		if err != nil {
+			return fmt.Errorf("gcloud start: %w", err)
+		}
+		if code == 0 {
+			return nil
+		}
+		stderrStr = string(stderr)
 		if strings.Contains(stderrStr, "is already") || strings.Contains(stderrStr, "already running") {
 			return nil
 		}
 		if strings.Contains(stderrStr, "was not found") {
 			return provider.ErrNotFound
 		}
-		return fmt.Errorf("gcloud start exit %d: %s", code, strings.TrimSpace(stderrStr))
+		// Retry condition: fingerprint changed (VM in STOPPING). Wait
+		// for the stop to settle, then try again. Other errors are
+		// terminal — bail immediately.
+		if !strings.Contains(stderrStr, "fingerprint changed") {
+			return fmt.Errorf("gcloud start exit %d: %s", code, strings.TrimSpace(stderrStr))
+		}
+		if attempt+1 >= maxAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Second):
+		}
 	}
-	return nil
+	return fmt.Errorf("gcloud start: VM still in STOPPING transition after %d retries: %s",
+		maxAttempts, strings.TrimSpace(stderrStr))
 }
 
 func (e *engine) Stop(ctx context.Context, vmID string) error {
 	if vmID == "" {
 		return errors.New("gcp.Stop: vmID required")
 	}
-	args := e.gcloudArgs("compute", "instances", "stop", vmID, "--zone", e.zone)
+	// `--async` returns as soon as GCE accepts the stop request
+	// (~1-2s), instead of blocking until the VM is fully TERMINATED
+	// (which on some regions takes 4-5 minutes — `moorpost return`
+	// would hang for that long, blocking the user from continuing
+	// even though their JSONL is already back on local). Eventual-
+	// consistency is fine for our use case: the VM will stop, billing
+	// stops at the same instant either way (GCE bills per-second from
+	// the moment STOPPING starts), and the next `moorpost handoff`
+	// will idempotently start it back up if needed.
+	args := e.gcloudArgs("compute", "instances", "stop", vmID, "--zone", e.zone, "--async")
 	_, stderr, code, err := e.exec.Run(ctx, e.binary, args, nil)
 	if err != nil {
 		return fmt.Errorf("gcloud stop: %w", err)
@@ -494,6 +532,15 @@ func (e *engine) Snapshot(ctx context.Context, vmID string, label string) (provi
 // machine types in us-central1 as of 2026-Q2. Used only as a fallback estimate
 // when the Cloud Billing API is unavailable. The real cost surface lands in
 // v0.3 (PLUGIN.md §9).
+//
+// ListPriceUSDPerHour returns the hourly USD list price for a machine type,
+// and whether it was found. Used by callers that already know the machine type
+// from config (avoids a gcloud describe round-trip).
+func ListPriceUSDPerHour(machineType string) (float64, bool) {
+	r, ok := listPriceTable[machineType]
+	return r, ok
+}
+
 var listPriceTable = map[string]float64{
 	"e2-micro":      0.0084,
 	"e2-small":      0.0168,
@@ -577,7 +624,7 @@ var ipRE = regexp.MustCompile(`\b(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})\b`)
 func extractIPFromCreateOutput(out string) string {
 	// gcloud's create output prints a table like:
 	//   NAME       ZONE           MACHINE_TYPE   ... INTERNAL_IP  EXTERNAL_IP   STATUS
-	//   argus-vm   us-central1-a  e2-standard-2  ... 10.128.0.2   35.x.y.z      RUNNING
+	//   webapp-vm   us-central1-a  e2-standard-2  ... 10.128.0.2   35.x.y.z      RUNNING
 	// We just extract the LAST IP-shaped token, which is the external on a
 	// public-IP create. This is a best-effort hint; SSHTarget() is the
 	// authoritative source.

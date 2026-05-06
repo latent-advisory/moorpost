@@ -67,7 +67,7 @@ func TestRunResetHappyPath(t *testing.T) {
 	// Project state should still exist (slug preserved across reset).
 	st, _ := state.Open(c.StatePath)
 	ps, ok := st.GetProject(c.ProjectDir)
-	if !ok || ps.Slug != "argus" {
+	if !ok || ps.Slug != "webapp" {
 		t.Errorf("project record lost across reset: ok=%v slug=%q", ok, ps.Slug)
 	}
 }

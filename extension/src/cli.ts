@@ -41,6 +41,15 @@ export interface StatusReport {
   // extension to `claude --resume <id>` when reopening the local
   // Moorpost: Claude terminal.
   agent_session_id?: string;
+  // Single-use baton set by `moorpost handoff`. When non-empty, the
+  // wrapper will inject `--resume <sid>` into the next plugin-spawned
+  // claude — meaning the post-handoff "Migrate this conversation"
+  // prompt has something live to consume.
+  pending_resume_sid?: string;
+  // Per-session routing (Phase 2). Sessions whose SID is in this list
+  // are routed to the remote VM by the wrapper, even if active_side is
+  // "local". Empty/missing on older builds — handle as `[]`.
+  remote_sids?: string[];
 }
 
 /**
@@ -62,6 +71,33 @@ export async function runJSON(args: string[], cwd?: string): Promise<unknown> {
       throw new Error(`moorpost ${args.join(' ')}: ${stderr || err.message}`);
     }
     throw err;
+  }
+}
+
+/**
+ * One entry in the gcloud configurations list, as emitted by
+ * `moorpost gcloud configs --json`. Field names are stable per the
+ * struct tags on cli/cmd/gcloud_picker.go's gcloudConfig.
+ */
+export interface GCloudConfig {
+  name: string;
+  is_active: boolean;
+  account: string;
+  project: string;
+}
+
+/**
+ * Fetch the local gcloud configurations the user has on this machine.
+ * Returns an empty array if gcloud isn't installed or has no configs;
+ * the caller is responsible for surfacing that case.
+ */
+export async function listGCloudConfigs(): Promise<GCloudConfig[]> {
+  try {
+    return (await runJSON(['gcloud', 'configs', '--json'])) as GCloudConfig[];
+  } catch {
+    // gcloud missing, moorpost binary too old, or command failed: degrade
+    // to "no configs" so the caller falls back to the terminal picker.
+    return [];
   }
 }
 

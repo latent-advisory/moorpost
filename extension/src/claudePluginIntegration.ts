@@ -4,11 +4,18 @@
 // SSHes to the VM and runs claude there. When active=local, the wrapper
 // is unset so the plugin uses its default claude binary directly.
 //
-// The plugin re-reads the setting on the next claude invocation, so the
-// effect is immediate for the next "new conversation"; an in-flight
-// conversation continues with whatever wrapper was in effect when it
-// started. We trigger claude-vscode.newConversation on side-flip so the
-// switch is visible to the user without manual action.
+// We deliberately do NOT trigger claude-vscode.newConversation when the
+// wrapper changes. An earlier version did, on the theory that a fresh
+// conversation would visibly demonstrate the new routing — but it had
+// the side effect of wiping the panel's scrollback AND replacing the
+// per-conversation CLAUDE_CONFIG_DIR with an empty one, so the wrapper
+// rsynced an empty dir to remote and the user saw "no history" after
+// every handoff. By leaving the conversation alone, the existing
+// CLAUDE_CONFIG_DIR (which contains the resumable session JSONL the
+// plugin writes as the conversation progresses) is preserved; the
+// next claude invocation through the new wrapper rsyncs that real dir
+// to remote, so remote claude resumes the same conversation. Visible
+// scrollback is preserved as a bonus.
 
 import * as vscode from 'vscode';
 import * as path from 'node:path';
@@ -28,6 +35,18 @@ export function pluginInstalled(): boolean {
   return vscode.extensions.getExtension(PLUGIN_ID) !== undefined;
 }
 
+/**
+ * True if the plugin's claudeProcessWrapper setting is currently pointing
+ * at our wrapper. This is the "we have routed the plugin to remote" signal —
+ * used by handoff/return to decide whether the user is in plugin mode (so
+ * return should unroute it) without needing to detect plugin-panel focus.
+ */
+export function pluginCurrentlyRouted(): boolean {
+  if (!pluginInstalled()) return false;
+  const cfg = vscode.workspace.getConfiguration(SETTING_SECTION);
+  return cfg.get<string>(SETTING_KEY) === wrapperPath();
+}
+
 async function wrapperExists(): Promise<boolean> {
   try {
     const stat = await fs.stat(wrapperPath());
@@ -39,8 +58,10 @@ async function wrapperExists(): Promise<boolean> {
 
 /**
  * Switch the plugin's claudeProcessWrapper setting to point at the
- * moorpost shim, AND ask the plugin to start a new conversation so the
- * user's panel immediately reflects the new (remote) routing.
+ * moorpost shim. The plugin re-reads this on the next claude
+ * invocation, so the user's existing conversation is preserved (panel
+ * scrollback intact, CLAUDE_CONFIG_DIR carried forward) and the next
+ * prompt is routed through the wrapper to remote.
  *
  * No-op if the plugin isn't installed or the wrapper script isn't on
  * disk yet (`moorpost bootstrap` writes it; `moorpost install-claude-wrapper`
@@ -57,16 +78,12 @@ export async function routePluginToRemote(): Promise<void> {
   }
   const cfg = vscode.workspace.getConfiguration(SETTING_SECTION);
   await cfg.update(SETTING_KEY, wrapperPath(), vscode.ConfigurationTarget.Global);
-  // New conversation forces the panel to start a fresh claude through
-  // the wrapper. The previous conversation (if any) keeps running with
-  // its old wrapper but the user's next prompt goes through the new path.
-  await tryNewConversation();
 }
 
 /**
  * Reset the plugin's wrapper setting so future invocations use the
- * default local claude. Triggers a new conversation so the panel
- * visibly transitions back to local.
+ * default local claude. Existing conversation is preserved; next
+ * prompt runs locally.
  */
 export async function routePluginToLocal(): Promise<void> {
   if (!pluginInstalled()) return;
@@ -74,16 +91,4 @@ export async function routePluginToLocal(): Promise<void> {
   // undefined removes our override; plugin falls back to its built-in
   // claude resolution.
   await cfg.update(SETTING_KEY, undefined, vscode.ConfigurationTarget.Global);
-  await tryNewConversation();
-}
-
-async function tryNewConversation(): Promise<void> {
-  // The plugin's command id has been stable across recent versions.
-  // Best-effort: silently ignore if the command isn't registered (older
-  // plugin version, or plugin disabled).
-  try {
-    await vscode.commands.executeCommand('claude-vscode.newConversation');
-  } catch {
-    // ignore
-  }
 }

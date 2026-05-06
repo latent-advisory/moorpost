@@ -364,9 +364,27 @@ func (c *claudeCode) Resume(ctx context.Context, target agent.SSHTarget, ref age
 	if exists {
 		return nil
 	}
-	cmd := "claude"
+	// Launch claude with cwd set to the LOCAL absolute path
+	// (`/Users/.../<project>`), which on the VM resolves through the
+	// bootstrap-created symlink to the actual project tree at
+	// `/home/moorpost/moorpost/<slug>`. claude encodes its session-state
+	// directory by literal cwd (`~/.claude/projects/<encoded-path>/`),
+	// not by realpath — so launching from /Users/.../<project> keeps
+	// the encoding aligned with the local side, where session JSONLs
+	// are stored as `~/.claude/projects/-Users-...-<project>/<sid>.jsonl`.
+	//
+	// Without this `cd`, tmux inherits the SSH session's $HOME as cwd
+	// (`/home/moorpost`) and any new-session data gets written to a
+	// second encoding dir (e.g. `-home-moorpost-moorpost-<slug>`),
+	// which `moorpost return` then doesn't sync back — silently losing
+	// any messages the user typed on the remote side.
+	claudeCmd := "claude"
 	if ref.SessionID != "" {
-		cmd = "claude --resume " + ref.SessionID
+		claudeCmd = "claude --resume " + ref.SessionID
+	}
+	cmd := claudeCmd
+	if ref.ProjectAbsDir != "" {
+		cmd = "cd " + shellSingleQuote(ref.ProjectAbsDir) + " && " + claudeCmd
 	}
 	// Pull the cached token if available; the remote agent will *also* read
 	// from /etc/moorpost/env (set by InjectCredential), so passing the env
@@ -441,6 +459,15 @@ func (c *claudeCode) Pause(ctx context.Context, target agent.SSHTarget, ref agen
 		case <-time.After(c.pauseInterval):
 		}
 	}
+}
+
+// shellSingleQuote wraps s in single quotes for safe inclusion in a
+// POSIX-shell command line. Embedded single quotes are escaped via the
+// classic `'\''` close-reopen idiom. Used so paths with spaces or shell
+// metacharacters (e.g. `&`) survive the trip through tmux → ssh → remote
+// shell.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // silence unused-import warnings on some Go versions

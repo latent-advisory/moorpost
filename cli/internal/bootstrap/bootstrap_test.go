@@ -10,9 +10,9 @@ import (
 
 func TestRenderSubstitutesVars(t *testing.T) {
 	out, err := Render(BootstrapVars{
-		ProjectSlug:       "argus",
-		LocalAbsPath:      "/Users/landytang/argus",
-		RemoteUser:        "landytang",
+		ProjectSlug:       "webapp",
+		LocalAbsPath:      "/Users/alice/webapp",
+		RemoteUser:        "alice",
 		NodeVersion:       "20",
 		ClaudeCodeVersion: "2.0.0",
 	})
@@ -20,9 +20,9 @@ func TestRenderSubstitutesVars(t *testing.T) {
 		t.Fatalf("Render: %v", err)
 	}
 	for _, want := range []string{
-		"project=argus",
-		"/Users/landytang/argus",
-		"landytang",
+		"project=webapp",
+		"/Users/alice/webapp",
+		"alice",
 		"latest-v20.x",
 		"@anthropic-ai/claude-code@2.0.0",
 		"chmod 0600 /etc/moorpost/env",
@@ -70,8 +70,8 @@ func TestRenderedScriptIsBashSyntactic(t *testing.T) {
 		t.Skipf("bash not available: %v", err)
 	}
 	out, err := Render(BootstrapVars{
-		ProjectSlug:  "argus",
-		LocalAbsPath: "/Users/x/argus",
+		ProjectSlug:  "webapp",
+		LocalAbsPath: "/Users/x/webapp",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -89,12 +89,12 @@ func TestRenderedScriptIsBashSyntactic(t *testing.T) {
 func TestRenderHandlesPathsWithSpaces(t *testing.T) {
 	out, err := Render(BootstrapVars{
 		ProjectSlug:  "x",
-		LocalAbsPath: "/Users/x/AI M&A/code/argus",
+		LocalAbsPath: "/Users/x/My Project & Co/code/webapp",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "/Users/x/AI M&A/code/argus") {
+	if !strings.Contains(out, "/Users/x/My Project & Co/code/webapp") {
 		t.Error("path with spaces lost in render")
 	}
 	// And should still pass bash -n.

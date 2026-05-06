@@ -10,11 +10,11 @@ import (
 )
 
 const fixtureV1 = `schema_version: 1
-project_slug: argus
+project_slug: webapp
 provider:
   type: gcp
   gcp:
-    project: latent-advisory
+    project: example-project
     region: us-central1
     zone: us-central1-a
     machine_type: e2-standard-2
@@ -64,8 +64,8 @@ func TestLoadValidFixture(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if c.ProjectSlug != "argus" {
-		t.Errorf("project_slug = %q, want argus", c.ProjectSlug)
+	if c.ProjectSlug != "webapp" {
+		t.Errorf("project_slug = %q, want webapp", c.ProjectSlug)
 	}
 	if c.Provider.Type != "gcp" {
 		t.Errorf("provider.type = %q, want gcp", c.Provider.Type)
@@ -87,8 +87,8 @@ func TestLoadValidFixture(t *testing.T) {
 	if !ok {
 		t.Fatalf("provider.gcp not a map[string]any: %T", gcpRaw)
 	}
-	if gcpMap["project"] != "latent-advisory" {
-		t.Errorf("provider.gcp.project = %v, want latent-advisory", gcpMap["project"])
+	if gcpMap["project"] != "example-project" {
+		t.Errorf("provider.gcp.project = %v, want example-project", gcpMap["project"])
 	}
 }
 
@@ -128,17 +128,17 @@ func TestValidateRejectsBadSlug(t *testing.T) {
 		slug      string
 		shouldErr bool
 	}{
-		{"argus", false},
-		{"latent-advisory", false},
+		{"webapp", false},
+		{"example-project", false},
 		{"a", false},
 		{"", true},
-		{"Argus", true},          // uppercase
+		{"WebApp", true},         // uppercase
 		{"-foo", true},           // leading hyphen
 		{"foo-", true},           // trailing hyphen
 		{"foo bar", true},        // space
 		{"foo_bar", true},        // underscore
-		{"argus2", false},
-		{"2argus", true}, // must start with letter
+		{"webapp2", false},
+		{"2webapp", true}, // must start with letter
 	}
 	for _, tc := range tests {
 		t.Run(tc.slug, func(t *testing.T) {
@@ -157,7 +157,7 @@ func TestValidateRejectsBadSlug(t *testing.T) {
 
 func TestValidateRejectsBadMode(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Mode = Mode("nonsense")
 	if err := c.Validate(); err == nil {
 		t.Error("Validate accepted bogus mode")
@@ -173,7 +173,7 @@ func TestPersistentAutoStopMinutes_DefaultIs60(t *testing.T) {
 
 func TestValidateRejectsNegativeAutoStopMinutes(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Persistent.AutoStopMinutes = -1
 	err := c.Validate()
 	if err == nil {
@@ -187,7 +187,7 @@ func TestValidateRejectsNegativeAutoStopMinutes(t *testing.T) {
 func TestValidateAcceptsZeroAutoStopMinutes(t *testing.T) {
 	// 0 is the documented "disable" value.
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Persistent.AutoStopMinutes = 0
 	if err := c.Validate(); err != nil {
 		t.Errorf("Validate rejected auto_stop_minutes=0 (should be allowed as disable): %v", err)
@@ -196,7 +196,7 @@ func TestValidateAcceptsZeroAutoStopMinutes(t *testing.T) {
 
 func TestValidateRejectsBadConflictPolicy(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Sync.ConflictPolicy = "smash-em-together"
 	if err := c.Validate(); err == nil {
 		t.Error("Validate accepted bogus conflict policy")
@@ -205,7 +205,7 @@ func TestValidateRejectsBadConflictPolicy(t *testing.T) {
 
 func TestValidateRequiresProviderAndAgent(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Provider.Type = ""
 	c.Agent.Type = ""
 	c.Sync.Engine = ""
@@ -223,7 +223,7 @@ func TestValidateRequiresProviderAndAgent(t *testing.T) {
 func TestValidateSchemaVersionMismatch(t *testing.T) {
 	c := Default()
 	c.SchemaVersion = 0
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	err := c.Validate()
 	if !errors.Is(err, ErrUnsupportedSchema) {
 		t.Errorf("Validate() = %v, want ErrUnsupportedSchema", err)
@@ -256,8 +256,8 @@ func TestLoadOrInitExisting(t *testing.T) {
 	if !existed {
 		t.Error("existed = false on existing file")
 	}
-	if c.ProjectSlug != "argus" {
-		t.Errorf("project_slug = %q, want argus", c.ProjectSlug)
+	if c.ProjectSlug != "webapp" {
+		t.Errorf("project_slug = %q, want webapp", c.ProjectSlug)
 	}
 }
 
@@ -275,7 +275,7 @@ func TestSaveRefusesInvalidConfig(t *testing.T) {
 
 func TestSaveCreatesParentDirectory(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	dir := t.TempDir()
 	out := filepath.Join(dir, "deeply", "nested", "config.yaml")
 	if err := c.Save(out); err != nil {
@@ -308,8 +308,8 @@ func TestConfigWithUnknownKeysIsForwardCompatible(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load with future fields: %v", err)
 	}
-	if c.ProjectSlug != "argus" {
-		t.Errorf("project_slug = %q, want argus", c.ProjectSlug)
+	if c.ProjectSlug != "webapp" {
+		t.Errorf("project_slug = %q, want webapp", c.ProjectSlug)
 	}
 }
 
@@ -370,13 +370,13 @@ func TestSlugBoundaryLengths(t *testing.T) {
 
 func TestCostNegativeValuesRejected(t *testing.T) {
 	c := Default()
-	c.ProjectSlug = "argus"
+	c.ProjectSlug = "webapp"
 	c.Cost.MonthlyCapUSD = -1
 	if err := c.Validate(); err == nil || !strings.Contains(err.Error(), "monthly_cap_usd") {
 		t.Errorf("Validate(neg cap) = %v, want error mentioning monthly_cap_usd", err)
 	}
 	c2 := Default()
-	c2.ProjectSlug = "argus"
+	c2.ProjectSlug = "webapp"
 	c2.Cost.AlertThresholds = []float64{-5, 10}
 	if err := c2.Validate(); err == nil || !strings.Contains(err.Error(), "alert_thresholds") {
 		t.Errorf("Validate(neg threshold) = %v, want error mentioning alert_thresholds", err)

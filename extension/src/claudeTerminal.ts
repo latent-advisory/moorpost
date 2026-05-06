@@ -5,8 +5,16 @@
 //
 // We can't swap a terminal's backing process in place (VSCode API doesn't
 // expose that), so each handoff/return disposes the old terminal and
-// creates a new one. The terminal NAME (`Moorpost: Claude (local)` vs
-// `Moorpost: Claude (remote)`) makes the swap visible.
+// creates a new one. The terminal name stays constant ("Moorpost: Claude")
+// across sides — only the icon flips ($(home) ↔ $(cloud)) — so the
+// visual continuity matches the user's mental model.
+//
+// Defensive sweep: before creating a new claude terminal, we dispose any
+// existing terminal whose name starts with TERMINAL_NAME_PREFIX, even if
+// it's not the one tracked in `active`. This catches stragglers that get
+// orphaned from the in-memory state (extension reload, the user manually
+// closed the previous one, etc.) and guarantees there's exactly one
+// claude terminal at any time.
 //
 // Disconnect detection: if the active terminal closes without us asking
 // (SSH drop, VM stop, etc.) and we're still on the remote side, surface
@@ -16,6 +24,12 @@
 
 import * as vscode from 'vscode';
 import { cliBinary, getStatus } from './cli';
+
+// Stable name shared by both local and remote variants — keeping it
+// identical means VSCode reuses the same terminal panel/tab slot when the
+// new one opens, so the swap reads as continuous rather than as a fresh
+// terminal appearing alongside the old.
+const TERMINAL_NAME = 'Moorpost: Claude';
 
 interface TerminalState {
   terminal: vscode.Terminal;
@@ -37,6 +51,22 @@ function dispose(): void {
 }
 
 /**
+ * Disposes any open VSCode terminal whose name matches the Moorpost
+ * Claude pattern, regardless of whether we tracked it in `active`. This
+ * is the safety net for orphaned terminals — extension reload, user
+ * manually closed the tracked one, a previous build's terminal that
+ * survived an upgrade, etc. Idempotent.
+ */
+function sweepOrphanClaudeTerminals(): void {
+  for (const t of vscode.window.terminals) {
+    if (t === active?.terminal) continue;
+    if (t.name === TERMINAL_NAME && !t.exitStatus) {
+      t.dispose();
+    }
+  }
+}
+
+/**
  * Opens (or focuses) the Moorpost Claude terminal in remote mode —
  * runs `moorpost attach` so the integrated terminal becomes the live
  * remote Claude pane. If a remote terminal is already alive, focuses
@@ -49,8 +79,9 @@ export function openRemoteClaude(cwd?: string): vscode.Terminal {
     return active.terminal;
   }
   dispose();
+  sweepOrphanClaudeTerminals();
   const terminal = vscode.window.createTerminal({
-    name: 'Moorpost: Claude (remote)',
+    name: TERMINAL_NAME,
     cwd,
     iconPath: new vscode.ThemeIcon('cloud'),
   });
@@ -71,8 +102,9 @@ export function openLocalClaude(cwd: string, sessionId?: string): vscode.Termina
     return active.terminal;
   }
   dispose();
+  sweepOrphanClaudeTerminals();
   const terminal = vscode.window.createTerminal({
-    name: 'Moorpost: Claude (local)',
+    name: TERMINAL_NAME,
     cwd,
     iconPath: new vscode.ThemeIcon('home'),
   });
@@ -130,6 +162,20 @@ export function registerClaudeTerminalWatchers(
 /** True if a Moorpost Claude terminal is alive on either side. */
 export function hasActiveClaude(): boolean {
   return Boolean(active && !active.terminal.exitStatus);
+}
+
+/**
+ * True if any open VSCode terminal is a Moorpost Claude terminal,
+ * regardless of whether we're currently tracking it. Used by
+ * handoff/return surface detection — the in-memory `active` reference
+ * may be undefined after extension reload while the terminal is still
+ * visible to the user, and that user-visible terminal is what we should
+ * key the "user is in terminal mode" decision off of.
+ */
+export function hasAnyClaudeTerminal(): boolean {
+  return vscode.window.terminals.some(
+    (t) => t.name === TERMINAL_NAME && !t.exitStatus,
+  );
 }
 
 /** Active side of the Moorpost Claude terminal, or undefined if none. */

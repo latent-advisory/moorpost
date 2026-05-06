@@ -14,10 +14,10 @@ import (
 // the tab-separated output of `gcloud config configurations list` so we
 // don't depend on a Go gcloud SDK.
 type gcloudConfig struct {
-	Name     string
-	IsActive bool
-	Account  string
-	Project  string
+	Name     string `json:"name"`
+	IsActive bool   `json:"is_active"`
+	Account  string `json:"account"`
+	Project  string `json:"project"`
 }
 
 // listGcloudConfigurations runs `gcloud config configurations list` and

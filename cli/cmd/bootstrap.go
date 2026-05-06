@@ -28,6 +28,7 @@ var (
 	bootstrapFlagYes        bool
 	bootstrapFlagProvision  bool
 	bootstrapFlagGCPProject string
+	bootstrapFlagGCPConfig  string
 )
 
 var bootstrapCmd = &cobra.Command{
@@ -51,6 +52,7 @@ func init() {
 	bootstrapCmd.Flags().BoolVar(&bootstrapFlagYes, "yes", false, "skip the confirmation prompt and run setup non-interactively")
 	bootstrapCmd.Flags().BoolVar(&bootstrapFlagProvision, "provision", false, "also run `moorpost provision` at the end (creates a GCP VM)")
 	bootstrapCmd.Flags().StringVar(&bootstrapFlagGCPProject, "gcp-project", "", "GCP project ID (default: auto-detect from gcloud)")
+	bootstrapCmd.Flags().StringVar(&bootstrapFlagGCPConfig, "gcp-config", "", "gcloud configuration name to pin moorpost to (default: prompt during init)")
 	rootCmd.AddCommand(bootstrapCmd)
 }
 
@@ -107,6 +109,9 @@ func runBootstrap(cmd *cobra.Command, _ []string) error {
 	initArgs := []string{"init"}
 	if bootstrapFlagGCPProject != "" {
 		initArgs = append(initArgs, "--gcp-project="+bootstrapFlagGCPProject)
+	}
+	if bootstrapFlagGCPConfig != "" {
+		initArgs = append(initArgs, "--gcp-config="+bootstrapFlagGCPConfig)
 	}
 	if err := stepShell(out, "init", initArgs...); err != nil {
 		// init's exit code on existing-config-without-force is non-zero. If

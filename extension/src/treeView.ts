@@ -1,20 +1,22 @@
 // Tree view — a persistent UI panel showing the project's Moorpost state.
 //
 // Top-level nodes:
-//   • Project        argus
-//   • Provider       gcp
-//   • Active side    local | remote
-//   • VM             argus-vm (running) — only present once provisioned
-//   • Sync engine    mutagen
-//   • Cost (MTD)     $0.42 — only present when VM exists
+//   • Project              webapp
+//   • Provider             gcp
+//   • Active side          local | remote
+//   • VM                   webapp-vm (running) — only present once provisioned
+//   • Sync engine          mutagen
+//   • Cost (MTD)           $0.42 — only present when VM exists
+//   • Remote sessions (N)  expandable, lists each SID currently routed to remote
 //
 // Click "refresh" (in the view title) to re-fetch via `moorpost status --json`.
 
 import * as vscode from 'vscode';
 import { getStatus, workspaceRoot } from './cli';
 import type { StatusReport } from './cli';
+import { listLocalSessions, type SessionInfo } from './sessionList';
 
-/** Single row in the tree. Always a leaf in v0.2 (no nested groups yet). */
+/** Single row in the tree. Most are leaves; "Remote sessions" parent expands. */
 export class MoorpostTreeItem extends vscode.TreeItem {
   constructor(
     public readonly label: string,
@@ -22,9 +24,12 @@ export class MoorpostTreeItem extends vscode.TreeItem {
     public readonly icon?: vscode.ThemeIcon,
     command?: vscode.Command,
     contextValue?: string,
+    collapsibleState: vscode.TreeItemCollapsibleState = vscode.TreeItemCollapsibleState.None,
+    /** Children for expandable nodes. Empty for leaves. */
+    public readonly children: MoorpostTreeItem[] = [],
   ) {
-    super(`${label}: ${value}`, vscode.TreeItemCollapsibleState.None);
-    this.tooltip = `${label}: ${value}`;
+    super(value ? `${label}: ${value}` : label, collapsibleState);
+    this.tooltip = value ? `${label}: ${value}` : label;
     if (icon) this.iconPath = icon;
     if (command) this.command = command;
     if (contextValue) this.contextValue = contextValue;
@@ -46,7 +51,8 @@ export class MoorpostTreeProvider
     return item;
   }
 
-  async getChildren(): Promise<MoorpostTreeItem[]> {
+  async getChildren(parent?: MoorpostTreeItem): Promise<MoorpostTreeItem[]> {
+    if (parent) return parent.children;
     const cwd = workspaceRoot();
     if (!cwd) {
       return [
@@ -63,8 +69,74 @@ export class MoorpostTreeProvider
         ),
       ];
     }
-    return buildItems(status);
+    // Top-level project rows (cheap — derived from status).
+    const items = buildItems(status);
+    // Remote-sessions section (slightly more expensive — reads JSONLs to
+    // compute first-message labels). Skip when there's nothing to show.
+    const remoteSids = status.remote_sids ?? [];
+    if (remoteSids.length > 0) {
+      const sessions = await listLocalSessions(cwd);
+      items.push(buildRemoteSessionsItem(remoteSids, sessions));
+    }
+    return items;
   }
+}
+
+/**
+ * Build the expandable "Remote sessions" parent node. Children:
+ *   - "Return all" action (only when N > 1).
+ *   - One row per remote SID, with first-message label, click-to-return
+ *     command, and a contextValue that lets per-row context menus show
+ *     a Return action.
+ *
+ * Sessions whose JSONL is missing from the local enumeration (rare —
+ * could happen if the JSONL hasn't been synced back yet) still appear
+ * with the SID as the only label.
+ */
+function buildRemoteSessionsItem(
+  remoteSids: string[],
+  localSessions: SessionInfo[],
+): MoorpostTreeItem {
+  const byId = new Map(localSessions.map((s) => [s.sessionId, s] as const));
+  const children: MoorpostTreeItem[] = [];
+  if (remoteSids.length > 1) {
+    children.push(
+      new MoorpostTreeItem(
+        'Return all',
+        '',
+        new vscode.ThemeIcon('arrow-down'),
+        { command: 'moorpost.return', title: 'Return all sessions' },
+        'moorpost.remoteSessions.all',
+      ),
+    );
+  }
+  for (const sid of remoteSids) {
+    const info = byId.get(sid);
+    const label = info?.firstUserText || '(no preview)';
+    const value = sid.slice(0, 8);
+    children.push(
+      new MoorpostTreeItem(
+        label,
+        value,
+        new vscode.ThemeIcon('cloud'),
+        {
+          command: 'moorpost.openRemoteSession',
+          title: 'Open remote session',
+          arguments: [sid],
+        },
+        'moorpost.remoteSession',
+      ),
+    );
+  }
+  return new MoorpostTreeItem(
+    'Remote sessions',
+    String(remoteSids.length),
+    new vscode.ThemeIcon('cloud'),
+    undefined,
+    'moorpost.remoteSessionsRoot',
+    vscode.TreeItemCollapsibleState.Expanded,
+    children,
+  );
 }
 
 /**
@@ -92,14 +164,34 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
     new MoorpostTreeItem('Mode', s.mode, new vscode.ThemeIcon('gear'), editConfig),
   ];
   if (s.active_side) {
-    const icon = s.active_side === 'remote' ? 'cloud' : 'home';
-    const ctx = `moorpost.activeSide.${s.active_side}`;
+    // Per-session routing: prefer the count of remote sessions over the
+    // legacy whole-project active_side field. Showing "local" while one
+    // session is actually on the VM is misleading.
+    const remoteCount = s.remote_sids?.length ?? 0;
+    const legacyRemote = remoteCount === 0 && s.active_side === 'remote';
+    let label: string;
+    let iconName: string;
+    let effectiveSide: 'local' | 'remote';
+    if (remoteCount > 0) {
+      label = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
+      iconName = 'cloud';
+      effectiveSide = 'remote';
+    } else if (legacyRemote) {
+      label = 'remote';
+      iconName = 'cloud';
+      effectiveSide = 'remote';
+    } else {
+      label = 'local';
+      iconName = 'home';
+      effectiveSide = 'local';
+    }
+    const ctx = `moorpost.activeSide.${effectiveSide}`;
     const toggle: vscode.Command = {
       command: 'moorpost.toggleSide',
       title: 'Switch local ↔ remote',
     };
     items.push(
-      new MoorpostTreeItem('Active side', s.active_side, new vscode.ThemeIcon(icon), toggle, ctx),
+      new MoorpostTreeItem('Active side', label, new vscode.ThemeIcon(iconName), toggle, ctx),
     );
   }
   if (s.vm_id) {

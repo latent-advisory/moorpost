@@ -24,7 +24,7 @@ func withFixGCPRunner(t *testing.T, fn func(ctx context.Context, w io.Writer, na
 func makeFixContext(t *testing.T, preflightErr error) *Context {
 	t.Helper()
 	cfg := config.Default()
-	cfg.ProjectSlug = "argus"
+	cfg.ProjectSlug = "webapp"
 	st := state.New()
 	return &Context{
 		Config:   cfg,
@@ -35,8 +35,8 @@ func makeFixContext(t *testing.T, preflightErr error) *Context {
 
 func TestTryFixComputeAPIMatchesAndRuns(t *testing.T) {
 	preflightErr := errors.New(`gcp preflight failed:
-  - Compute Engine API not enabled on project "latent-advisory"
-    fix: gcloud services enable compute.googleapis.com --project=latent-advisory`)
+  - Compute Engine API not enabled on project "example-project"
+    fix: gcloud services enable compute.googleapis.com --project=example-project`)
 	c := makeFixContext(t, preflightErr)
 
 	var ranArgs []string
@@ -53,7 +53,7 @@ func TestTryFixComputeAPIMatchesAndRuns(t *testing.T) {
 	if !applied {
 		t.Error("expected applied=true when error matches API-disabled pattern")
 	}
-	want := []string{"gcloud", "services", "enable", "compute.googleapis.com", "--project=latent-advisory"}
+	want := []string{"gcloud", "services", "enable", "compute.googleapis.com", "--project=example-project"}
 	if len(ranArgs) != len(want) {
 		t.Fatalf("ran args = %v, want %v", ranArgs, want)
 	}

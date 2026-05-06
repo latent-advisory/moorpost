@@ -3,8 +3,7 @@
 > Tether your laptop to a remote forward base where Claude Code keeps working.
 
 **Status:** Draft v0.1 · 2026-05-04
-**Owners:** Latent Advisory
-**License (intended):** Apache 2.0
+**License:** Apache 2.0
 
 ---
 
@@ -76,7 +75,7 @@ Anthropic's own engineers run Claude Code on Coder.com (per Coder's "Building fo
 ┌──────────────────────────────────────────────┐
 │  Configure Moorpost for this project         │
 ├──────────────────────────────────────────────┤
-│  GCP project: [latent-advisory ▾]            │
+│  GCP project: [your-gcp-project ▾]           │
 │  Region:      [us-central1   ▾]              │
 │  Machine:     [e2-standard-2 ▾]              │
 │   $0/mo stopped · ~$0.067/hr running          │
@@ -467,13 +466,13 @@ Project-local. Checked into git so teammates see the same settings.
 ```yaml
 # .moorpost/config.yaml
 schema_version: 1
-project_slug: argus                 # used for tmux session name and ~/moorpost/<slug>
+project_slug: webapp                # used for tmux session name and ~/moorpost/<slug>
 
 # --- Provider (cloud) ---------------------------------------------------------
 provider:
   type: gcp                          # gcp | hetzner (v1.1) | aws (v2) | azure (v2)
   gcp:                               # only one provider section is read, by `type`
-    project: latent-advisory
+    project: your-gcp-project
     region: us-central1
     zone: us-central1-a
     machine_type: e2-standard-2
@@ -532,9 +531,9 @@ Per-machine. Not synced. Records which projects are configured, which side is cu
   "machine_id": "uuid-...",
   "telemetry_opt_in": false,
   "projects": {
-    "/Users/landytang/Documents/Claude/Projects/AI M&A/code/argus": {
-      "slug": "argus",
-      "vm_id": "argus-vm",
+    "/Users/alice/code/webapp": {
+      "slug": "webapp",
+      "vm_id": "webapp-vm",
       "vm_zone": "us-central1-a",
       "active_side": "local",
       "last_handoff": null,
@@ -544,7 +543,7 @@ Per-machine. Not synced. Records which projects are configured, which side is cu
     }
   },
   "vms": {
-    "argus-vm": {
+    "webapp-vm": {
       "provider": "gcp",
       "external_ip": "35.x.x.x",
       "state_cache": "stopped",
@@ -734,8 +733,6 @@ A *moorpost* is a real maritime term: the post on a dock to which a ship is moor
 - The **ship** = your laptop. Mobile, comes and goes.
 - The **moorpost** = the remote VM. Fixed, always there, where work is anchored.
 - The **mooring line** = the SSH + sync connection that tethers the two.
-
-Closes pleasingly with "Latent Advisory" — what is mooring but holding something latent in place until needed?
 
 ## Appendix B: Comparison snapshot (from research, 2026-05)
 

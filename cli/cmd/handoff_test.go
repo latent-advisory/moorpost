@@ -128,16 +128,19 @@ func makeHandoffContext(t *testing.T, fp *fakeProvider, fa *cmdFakeAgent, fs *cm
 func TestRunHandoffHappyPath(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "35.1.2.3", Port: 22, User: "u"}}
 	fa := &cmdFakeAgent{
-		authResult:       agent.Credential{EnvVar: "TOKEN", Value: "x", Kind: "k"},
+		authResult:       agent.Credential{EnvVar: "TOKEN", Value: "sk-ant-oat01-test-fixture-token", Kind: "k"},
 		sessionStateRoot: t.TempDir(),
 	}
 	fs := &cmdFakeSync{}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
 	var out bytes.Buffer
 	fixedNow := time.Date(2026, 5, 4, 21, 0, 0, 0, time.UTC)
+	// Use --new-session here: that's the path that flips ActiveSide=
+	// remote (per-SID handoffs leave it alone; covered by other tests).
 	err := RunHandoff(context.Background(), &out, strings.NewReader("y\n"), c, HandoffOptions{
 		Now:         func() time.Time { return fixedNow },
 		SkipSSHWait: true,
+		NewSession:  true,
 	})
 	if err != nil {
 		t.Fatalf("RunHandoff: %v", err)
@@ -176,7 +179,14 @@ func TestRunHandoffRejectsAlreadyRemote(t *testing.T) {
 	fs := &cmdFakeSync{}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideRemote)
 	var out bytes.Buffer
-	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
+	// Per-session routing: the "already remote" guard only applies to
+	// the --new-session path (per-SID handoffs are valid even if other
+	// sessions are already remote). Pass NewSession to exercise it.
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		NewSession:  true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "already remote") {
 		t.Errorf("err = %v, want 'already remote'", err)
 	}
@@ -200,7 +210,7 @@ func TestRunHandoffPromptAbort(t *testing.T) {
 func TestRunHandoffStartFailure(t *testing.T) {
 	myErr := errors.New("permission denied")
 	fp := &fakeProvider{startErr: myErr, sshTarget: provider.SSHTarget{Host: "h"}}
-	c := makeHandoffContext(t, fp, &cmdFakeAgent{}, &cmdFakeSync{}, state.SideLocal)
+	c := makeHandoffContext(t, fp, &cmdFakeAgent{authResult: agent.Credential{Value: "sk-ant-oat01-test-fixture-token"}}, &cmdFakeSync{}, state.SideLocal)
 	var out bytes.Buffer
 	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true})
 	if !errors.Is(err, myErr) {
@@ -275,7 +285,7 @@ func TestRunReturnHappyPath(t *testing.T) {
 
 func TestRunHandoffStartSessionFailure(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
-	fa := &cmdFakeAgent{authResult: agent.Credential{Value: "x"}}
+	fa := &cmdFakeAgent{authResult: agent.Credential{Value: "sk-ant-oat01-test-fixture-token"}}
 	fs := &cmdFakeSync{startErr: errors.New("mutagen daemon not running")}
 	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
 	var out bytes.Buffer
@@ -446,7 +456,7 @@ func TestRunHandoffWritesWatermarkOnFirstHandoff(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
 	stateRoot := t.TempDir()
 	fa := &cmdFakeAgent{
-		authResult:       agent.Credential{Value: "x"},
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
 		sessionStateRoot: stateRoot,
 	}
 	fs := &cmdFakeSync{}
@@ -473,6 +483,43 @@ func TestRunHandoffWritesWatermarkOnFirstHandoff(t *testing.T) {
 	}
 }
 
+// TestRunHandoffSetsPendingResumeSID: after a successful handoff with
+// an auto-selected session ID, state.json's PendingResumeSID is set to
+// that SID — the wrapper consumes it on the next plugin-spawned claude
+// to inject `--resume <sid>` so the conversation continues on remote.
+// Regression: missing this means the moorpost extension's "Migrate this
+// conversation" button has nothing for the wrapper to pick up.
+func TestRunHandoffSetsPendingResumeSID(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	stateRoot := t.TempDir()
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
+		sessionStateRoot: stateRoot,
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	// Plant a session JSONL so mostRecentSession returns its SID.
+	sessionDir := stateRoot + c.ProjectDir
+	if err := osMkdirAllForTest(sessionDir); err != nil {
+		t.Fatal(err)
+	}
+	wantSID := "ca0a13b0-b4fe-411f-9a6c-08404be8b458"
+	if err := osWriteFileForTest(sessionDir+"/"+wantSID+".jsonl", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{SkipPrompt: true, SkipSSHWait: true}); err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.PendingResumeSID != wantSID {
+		t.Errorf("PendingResumeSID = %q, want %q", ps.PendingResumeSID, wantSID)
+	}
+}
+
 // TestRunHandoffPreferRemoteAbortsOnDivergence: after a successful
 // handoff sets the watermark, a subsequent local edit (changing the
 // manifest) plus --prefer-remote should abort.
@@ -480,7 +527,7 @@ func TestRunHandoffPreferRemoteAbortsOnDivergence(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
 	stateRoot := t.TempDir()
 	fa := &cmdFakeAgent{
-		authResult:       agent.Credential{Value: "x"},
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
 		sessionStateRoot: stateRoot,
 	}
 	fs := &cmdFakeSync{}
@@ -529,7 +576,7 @@ func TestRunHandoffPreferLocalProceedsOnDivergence(t *testing.T) {
 	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
 	stateRoot := t.TempDir()
 	fa := &cmdFakeAgent{
-		authResult:       agent.Credential{Value: "x"},
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
 		sessionStateRoot: stateRoot,
 	}
 	fs := &cmdFakeSync{}
@@ -569,6 +616,170 @@ func TestRunHandoffPreferLocalProceedsOnDivergence(t *testing.T) {
 	ps, _ = st.GetProject(c.ProjectDir)
 	if ps.LastSessionSyncHash == "" || ps.LastSessionSyncHash == firstWatermark {
 		t.Errorf("watermark not updated after --prefer-local: first=%q now=%q", firstWatermark, ps.LastSessionSyncHash)
+	}
+}
+
+// --- iter 36: per-session routing via --session / --new-session ---
+
+// TestRunHandoffSessionAddsToRemoteSIDs: handoff with --session A
+// registers A in RemoteSIDs and leaves ActiveSide untouched (so other
+// fresh panels can still go local).
+func TestRunHandoffSessionAddsToRemoteSIDs(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
+		sessionStateRoot: t.TempDir(),
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	const sidA = "11111111-1111-1111-1111-111111111111"
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		SessionID:   sidA,
+	}); err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if !ps.HasRemoteSID(sidA) {
+		t.Errorf("RemoteSIDs = %v, expected to contain %q", ps.RemoteSIDs, sidA)
+	}
+	if ps.ActiveSide == state.SideRemote {
+		t.Errorf("ActiveSide = %q, want untouched (not remote) for per-SID handoff", ps.ActiveSide)
+	}
+}
+
+// TestRunHandoffSessionTwoSIDsAccumulate: --session A then --session B
+// results in RemoteSIDs containing both.
+func TestRunHandoffSessionTwoSIDsAccumulate(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
+		sessionStateRoot: t.TempDir(),
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	const sidA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	const sidB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		SessionID:   sidA,
+	}); err != nil {
+		t.Fatalf("first handoff: %v", err)
+	}
+	out.Reset()
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		SessionID:   sidB,
+	}); err != nil {
+		t.Fatalf("second handoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if !ps.HasRemoteSID(sidA) || !ps.HasRemoteSID(sidB) {
+		t.Errorf("RemoteSIDs = %v, expected both %q and %q", ps.RemoteSIDs, sidA, sidB)
+	}
+	if len(ps.RemoteSIDs) != 2 {
+		t.Errorf("RemoteSIDs len = %d, want 2", len(ps.RemoteSIDs))
+	}
+}
+
+// TestRunHandoffSessionIdempotent: handoff with the same --session A
+// twice does not duplicate the SID.
+func TestRunHandoffSessionIdempotent(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
+		sessionStateRoot: t.TempDir(),
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	const sidA = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	var out bytes.Buffer
+	for i := 0; i < 2; i++ {
+		if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+			SkipPrompt:  true,
+			SkipSSHWait: true,
+			SessionID:   sidA,
+		}); err != nil {
+			t.Fatalf("handoff #%d: %v", i+1, err)
+		}
+		out.Reset()
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	count := 0
+	for _, s := range ps.RemoteSIDs {
+		if s == sidA {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("RemoteSIDs %v contains %q %d times, want 1 (idempotent)", ps.RemoteSIDs, sidA, count)
+	}
+}
+
+// TestRunHandoffNewSessionFlipsActiveSide: --new-session flips
+// ActiveSide=remote (so the wrapper's fresh-spawn fallback routes
+// remote) and does NOT add anything to RemoteSIDs (no SID yet).
+func TestRunHandoffNewSessionFlipsActiveSide(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{
+		authResult:       agent.Credential{Value: "sk-ant-oat01-test-fixture-token"},
+		sessionStateRoot: t.TempDir(),
+	}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	var out bytes.Buffer
+	if err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		NewSession:  true,
+	}); err != nil {
+		t.Fatalf("RunHandoff: %v", err)
+	}
+	st, _ := state.Open(c.StatePath)
+	ps, _ := st.GetProject(c.ProjectDir)
+	if ps.ActiveSide != state.SideRemote {
+		t.Errorf("ActiveSide = %q, want remote for --new-session", ps.ActiveSide)
+	}
+	if len(ps.RemoteSIDs) != 0 {
+		t.Errorf("RemoteSIDs = %v, want empty (no SID was registered for --new-session)", ps.RemoteSIDs)
+	}
+	if ps.PendingResumeSID != "" {
+		t.Errorf("PendingResumeSID = %q, want empty (no SID to migrate-resume to)", ps.PendingResumeSID)
+	}
+}
+
+// TestRunHandoffSessionAndNewSessionMutuallyExclusive: passing both
+// --session and --new-session returns an error before doing any work.
+func TestRunHandoffSessionAndNewSessionMutuallyExclusive(t *testing.T) {
+	fp := &fakeProvider{sshTarget: provider.SSHTarget{Host: "h", User: "u"}}
+	fa := &cmdFakeAgent{}
+	fs := &cmdFakeSync{}
+	c := makeHandoffContext(t, fp, fa, fs, state.SideLocal)
+
+	var out bytes.Buffer
+	err := RunHandoff(context.Background(), &out, strings.NewReader(""), c, HandoffOptions{
+		SkipPrompt:  true,
+		SkipSSHWait: true,
+		SessionID:   "some-sid",
+		NewSession:  true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("err = %v, want mutually-exclusive error", err)
+	}
+	if len(fp.startCalls) != 0 {
+		t.Error("Start should not be called when flags conflict")
 	}
 }
 

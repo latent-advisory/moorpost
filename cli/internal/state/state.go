@@ -41,12 +41,64 @@ type ProjectState struct {
 	AgentSessionID   string    `json:"agent_session_id"`
 	SyncSessionID    string    `json:"sync_session_id"`
 
+	// PendingResumeSID is a single-use hand-off baton: the CLI sets it
+	// after a successful `moorpost handoff` to record the session ID the
+	// next plugin-spawned claude should resume. The claude-wrapper reads
+	// it, injects `--resume <sid>` into the remote claude argv, and then
+	// atomically clears the field. Empty = no pending migration.
+	//
+	// This is the mechanism behind the extension's "Migrate this
+	// conversation to remote" button: trigger
+	// claude-vscode.newConversation → plugin spawns fresh claude →
+	// wrapper sees pending → injects --resume → remote claude reads the
+	// (already synced) JSONL and continues the conversation with full
+	// model context. Panel scrollback resets because newConversation
+	// allocates a fresh CLAUDE_CONFIG_DIR, but the conversation itself
+	// is preserved on the model side and accessible via the plugin's
+	// session-history list.
+	PendingResumeSID string `json:"pending_resume_sid,omitempty"`
+
 	// LastSessionSyncHash is the SHA-256 manifest hash of
 	// ~/.claude/projects/<encoded>/ as of the last successful handoff or
 	// return. Used by `moorpost handoff` / `moorpost return` to detect
 	// the session-state-conflict case spec'd in PLUGIN.md §6.5 line 261.
 	// Empty means "no successful sync yet" — first handoff will set it.
 	LastSessionSyncHash string `json:"last_session_sync_hash,omitempty"`
+
+	// LastPluginsSyncHash is the SHA-256 of a {path,size,mtime} manifest
+	// over ~/.claude/plugins/ at the time of the last successful plugin
+	// rsync to this project's VM. Handoff compares the current local
+	// hash to this value and skips the plugin rsync when they match,
+	// saving ~3-5s on warm handoffs where the user hasn't installed/
+	// removed plugins. Empty = no prior sync, always re-rsync.
+	//
+	// Project-scoped (not machine-scoped) because each VM is its own
+	// destination — re-syncing is the only way to know that a NEW VM
+	// has the plugins installed. Mild inefficiency: if you have 3
+	// projects and update plugins, the first handoff for each project
+	// re-rsyncs. Negligible in practice.
+	LastPluginsSyncHash string `json:"last_plugins_sync_hash,omitempty"`
+
+	// RemoteSIDs is the set of session IDs currently routed to the remote VM.
+	// Per-session routing replaces the project-level active_side dichotomy
+	// for sessions with a known SID: the wrapper checks if --resume <sid>
+	// is in this set and routes accordingly. Sessions NOT in this set
+	// (including fresh spawns with no --resume) fall back to active_side.
+	//
+	// Handoff(sid) appends to this set; Return(sid) removes from it; the
+	// VM is safe to stop only when this set is empty (no live remote work).
+	// Order is insertion-order; uniqueness is enforced by callers.
+	RemoteSIDs []string `json:"remote_sids,omitempty"`
+}
+
+// HasRemoteSID returns whether sid is currently routed to the remote VM.
+func (p ProjectState) HasRemoteSID(sid string) bool {
+	for _, s := range p.RemoteSIDs {
+		if s == sid {
+			return true
+		}
+	}
+	return false
 }
 
 // VMRecord caches metadata about a VM. The provider's API is the source of
@@ -211,4 +263,40 @@ func (s *State) RecordReturn(projectAbsPath string, now time.Time) {
 	p.LastReturn = now
 	p.ActiveSide = SideLocal
 	s.Projects[projectAbsPath] = p
+}
+
+// AddRemoteSID idempotently appends sid to the project's RemoteSIDs set.
+// Returns true if the set changed (sid was not already present). Empty
+// sid is silently ignored.
+func (s *State) AddRemoteSID(projectAbsPath, sid string) bool {
+	if sid == "" {
+		return false
+	}
+	p := s.Projects[projectAbsPath]
+	for _, existing := range p.RemoteSIDs {
+		if existing == sid {
+			return false
+		}
+	}
+	p.RemoteSIDs = append(p.RemoteSIDs, sid)
+	s.Projects[projectAbsPath] = p
+	return true
+}
+
+// RemoveRemoteSID removes sid from the project's RemoteSIDs set. Returns
+// true if the set changed (sid was present). Empty sid is silently
+// ignored.
+func (s *State) RemoveRemoteSID(projectAbsPath, sid string) bool {
+	if sid == "" {
+		return false
+	}
+	p := s.Projects[projectAbsPath]
+	for i, existing := range p.RemoteSIDs {
+		if existing == sid {
+			p.RemoteSIDs = append(p.RemoteSIDs[:i], p.RemoteSIDs[i+1:]...)
+			s.Projects[projectAbsPath] = p
+			return true
+		}
+	}
+	return false
 }

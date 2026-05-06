@@ -53,8 +53,8 @@ type SSHTarget struct {
 // implementation decides what session-id format means; Moorpost stores it
 // opaquely in state.json.
 type SessionRef struct {
-	ProjectSlug   string // e.g. "argus"
-	ProjectAbsDir string // e.g. "/Users/landytang/.../argus" (used for state-path encoding)
+	ProjectSlug   string // e.g. "webapp"
+	ProjectAbsDir string // e.g. "/Users/alice/.../webapp" (used for state-path encoding)
 	SessionID     string // agent-specific, opaque to the CLI
 }
 

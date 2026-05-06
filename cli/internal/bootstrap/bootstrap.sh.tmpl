@@ -76,16 +76,43 @@ echo "[moorpost] node: $(node --version 2>/dev/null || echo MISSING)"
 # 3. Claude Code CLI
 # --------------------------------------------------------------------------
 echo "[moorpost] step 3: Claude Code CLI"
-if ! command -v claude >/dev/null 2>&1; then
-    npm install -g @anthropic-ai/claude-code{{if .ClaudeCodeVersion}}@{{.ClaudeCodeVersion}}{{end}}
-    # npm puts global binaries in /opt/node/bin (already on this script's
-    # PATH). Also symlink to /usr/local/bin so the e2e probe and any user
-    # whose PATH wasn't refreshed can still find it.
+# Claude Code 2.x distributes a small JS shim + per-platform binary as an
+# npm optionalDependency (e.g. @anthropic-ai/claude-code-linux-x64). We've
+# observed a real failure mode where the optional dep gets a corrupt
+# (truncated) package.json under .../claude-code/node_modules/@anthropic-ai/
+# — Node's resolver finds the corrupt copy first and the bundled
+# bin/claude.exe segfaults, so `claude --version` segfaults silently while
+# the binary appears installed. To avoid this, we (a) install with
+# --force so optional deps are refetched even if a prior partial install
+# left a stub, (b) verify `claude --version` succeeds, and (c) on
+# verification failure, scrub any corrupt nested platform-package dir and
+# reinstall once before giving up.
+install_claude() {
+    npm install -g --force @anthropic-ai/claude-code{{if .ClaudeCodeVersion}}@{{.ClaudeCodeVersion}}{{end}}
     if [ -e /opt/node/bin/claude ] && [ ! -e /usr/local/bin/claude ]; then
         ln -sf /opt/node/bin/claude /usr/local/bin/claude
     fi
+}
+
+if ! command -v claude >/dev/null 2>&1; then
+    install_claude
 fi
-echo "[moorpost] claude: $(claude --version 2>/dev/null || echo MISSING)"
+
+claude_version_output="$(claude --version 2>&1)"
+claude_version_exit=$?
+if [ "$claude_version_exit" -ne 0 ]; then
+    echo "[moorpost] claude --version failed (exit $claude_version_exit): $claude_version_output"
+    echo "[moorpost] scrubbing potentially-corrupt nested platform package and reinstalling"
+    rm -rf /opt/node/lib/node_modules/@anthropic-ai/claude-code/node_modules/@anthropic-ai
+    install_claude
+    claude_version_output="$(claude --version 2>&1)"
+    claude_version_exit=$?
+fi
+if [ "$claude_version_exit" -ne 0 ]; then
+    echo "[moorpost] FATAL: claude install is broken after retry (exit $claude_version_exit): $claude_version_output"
+    exit 1
+fi
+echo "[moorpost] claude: $claude_version_output"
 
 # --------------------------------------------------------------------------
 # 4. uv (fast Python package manager)
@@ -156,6 +183,22 @@ if [ ! -f /etc/moorpost/env ]; then
 fi
 chmod 0600 /etc/moorpost/env
 chown "{{.RemoteUser}}:{{.RemoteUser}}" /etc/moorpost/env
+
+# --------------------------------------------------------------------------
+# 7. Enable systemd user-process linger
+# --------------------------------------------------------------------------
+# Without linger, systemd-logind kills all user-owned processes the moment
+# the user's last login session ends. handoff launches `tmux new-session
+# -d -s moorpost claude --resume <id>` over SSH; when that SSH command
+# returns, the session ends and tmux gets killed before the user can ever
+# attach. enable-linger tells logind "this user has long-running
+# background work, leave their processes alone after logout."
+#
+# Idempotent: re-running the bootstrap (or `moorpost reset`) is a no-op
+# once linger is on. /var/lib/systemd/linger/<user> is the persistence
+# marker; loginctl handles the systemd-side activation.
+echo "[moorpost] step 7: enable user linger (so tmux survives SSH disconnect)"
+loginctl enable-linger "{{.RemoteUser}}"
 
 {{.IdleMonitorInstall}}
 # --------------------------------------------------------------------------

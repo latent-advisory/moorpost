@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/latent-advisory/moorpost/cli/internal/provider"
+	"github.com/latent-advisory/moorpost/cli/internal/provider/gcp"
+	"github.com/latent-advisory/moorpost/cli/internal/runtime"
+	"github.com/latent-advisory/moorpost/cli/internal/state"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -62,6 +67,48 @@ type statusReport struct {
 	// extension uses it to auto-resume the right session when re-opening
 	// the local Claude terminal after a return.
 	AgentSessionID string `json:"agent_session_id,omitempty"`
+	// PendingResumeSID is the single-use baton set by `moorpost handoff`
+	// for the wrapper's --resume injection. Mirrored into status output
+	// so the extension knows whether the "Migrate this conversation" UX
+	// is meaningful — present means the wrapper has something to consume
+	// on the next plugin claude spawn.
+	PendingResumeSID string `json:"pending_resume_sid,omitempty"`
+	// RemoteSIDs is the per-session routing set: SIDs in this list are
+	// routed to the remote VM by the wrapper. Empty/missing on projects
+	// that haven't done a per-session handoff yet — extension treats
+	// nil and `[]` identically.
+	RemoteSIDs []string `json:"remote_sids,omitempty"`
+}
+
+// computeMTDCost estimates the month-to-date VM cost from the audit log and
+// the machine type in config. No GCP API call — uses list-price table plus
+// actual running hours derived from handoff/return events. Returns 0 on any
+// error (config missing, unknown machine type, unreadable audit log) so it
+// never blocks the status call.
+func computeMTDCost(c *Context) float64 {
+	if c == nil || c.Config == nil {
+		return 0
+	}
+	gcpCfg := pickSubsection(c.Config.Provider.Raw, c.Config.Provider.Type)
+	machineType, _ := gcpCfg["machine_type"].(string)
+	if machineType == "" {
+		machineType = "e2-standard-2"
+	}
+	rate, ok := gcp.ListPriceUSDPerHour(machineType)
+	if !ok || rate <= 0 {
+		return 0
+	}
+	now := time.Now().UTC()
+	y, m, _ := now.Date()
+	start := time.Date(y, m, 1, 0, 0, 0, 0, time.UTC)
+	tr := provider.TimeRange{Start: start, End: now}
+	daysBack := int(now.Sub(start).Hours()/24) + 2
+	entries, err := auditReaderForCost(daysBack)
+	if err != nil || len(entries) == 0 {
+		return 0
+	}
+	hours := runtime.RunningHours(entries, tr, now)
+	return rate * hours
 }
 
 // RunStatus prints the project status. If asJSON is true, emits the report
@@ -85,9 +132,26 @@ func RunStatus(out io.Writer, c *Context, asJSON bool) error {
 				report.ActiveSide = string(ps.ActiveSide)
 				report.VMID = ps.VMID
 				report.AgentSessionID = ps.AgentSessionID
+				report.PendingResumeSID = ps.PendingResumeSID
+				report.RemoteSIDs = ps.RemoteSIDs
 				if vm, ok := c.State.VMs[ps.VMID]; ok {
 					report.VMState = vm.StateCache
-					report.MTDCostUSD = vm.MonthToDateUSD
+				}
+				// Compute cost from audit log + config machine type — no GCP
+				// API call. Always fresh so the status bar reflects reality.
+				if ps.VMID != "" {
+					// Prefer a freshly computed value from the audit log; fall
+					// back to the state-cache when the audit log is empty or
+					// unavailable (e.g. first run, or no handoffs this month).
+					if computed := computeMTDCost(c); computed > 0 {
+						report.MTDCostUSD = computed
+						_ = withVM(c, ps.VMID, func(rec *state.VMRecord) error {
+							rec.MonthToDateUSD = computed
+							return nil
+						})
+					} else if vm, ok := c.State.VMs[ps.VMID]; ok {
+						report.MTDCostUSD = vm.MonthToDateUSD
+					}
 				}
 				if ps.SyncSessionID != "" && c.Sync != nil {
 					report.HasSyncSession = true

@@ -15,8 +15,8 @@ func TestRunInitWritesValidConfig(t *testing.T) {
 	var out bytes.Buffer
 	err := RunInit(&out, InitOptions{
 		Dir:        dir,
-		Slug:       "argus",
-		GCPProject: "latent-advisory",
+		Slug:       "webapp",
+		GCPProject: "example-project",
 		Region:     "us-central1",
 	})
 	if err != nil {
@@ -30,7 +30,7 @@ func TestRunInitWritesValidConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load roundtrip: %v", err)
 	}
-	if cfg.ProjectSlug != "argus" {
+	if cfg.ProjectSlug != "webapp" {
 		t.Errorf("project_slug = %q", cfg.ProjectSlug)
 	}
 	if cfg.Provider.Type != "gcp" {
@@ -43,7 +43,7 @@ func TestRunInitWritesValidConfig(t *testing.T) {
 	if gcp == nil {
 		t.Fatal("provider.gcp subsection missing")
 	}
-	if gcp["project"] != "latent-advisory" {
+	if gcp["project"] != "example-project" {
 		t.Errorf("provider.gcp.project = %v", gcp["project"])
 	}
 	if gcp["zone"] != "us-central1-a" {
@@ -80,9 +80,9 @@ func TestRunInitForceOverwrites(t *testing.T) {
 
 func TestDeriveSlug(t *testing.T) {
 	tests := []struct{ in, want string }{
-		{"argus", "argus"},
+		{"webapp", "webapp"},
 		{"My Project", "my-project"},
-		{"AI M&A", "ai-m-a"},
+		{"R&D", "r-d"},
 		{"123abc", "p-123abc"},
 		{"---weird", "weird"},
 		{"", "moorpost-project"},

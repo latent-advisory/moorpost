@@ -35,14 +35,14 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "state.json")
 	s := New()
 	s.TelemetryOptIn = true
-	s.SetProject("/Users/x/argus", ProjectState{
-		Slug:           "argus",
-		VMID:           "argus-vm-1",
+	s.SetProject("/Users/x/webapp", ProjectState{
+		Slug:           "webapp",
+		VMID:           "webapp-vm-1",
 		VMZone:         "us-central1-a",
 		ActiveSide:     SideLocal,
 		AgentSessionID: "abc",
 	})
-	s.VMs["argus-vm-1"] = VMRecord{
+	s.VMs["webapp-vm-1"] = VMRecord{
 		Provider:       "gcp",
 		ExternalIP:     "35.1.2.3",
 		StateCache:     "stopped",
@@ -62,10 +62,10 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if !s2.TelemetryOptIn {
 		t.Error("TelemetryOptIn lost in round-trip")
 	}
-	if got, ok := s2.GetProject("/Users/x/argus"); !ok || got.Slug != "argus" {
+	if got, ok := s2.GetProject("/Users/x/webapp"); !ok || got.Slug != "webapp" {
 		t.Errorf("project round-trip: ok=%v slug=%q", ok, got.Slug)
 	}
-	if vm := s2.VMs["argus-vm-1"]; vm.ExternalIP != "35.1.2.3" {
+	if vm := s2.VMs["webapp-vm-1"]; vm.ExternalIP != "35.1.2.3" {
 		t.Errorf("vm round-trip lost external_ip: %v", vm)
 	}
 }
@@ -144,7 +144,7 @@ func TestWithLockSerializesWriters(t *testing.T) {
 				atomic.AddInt32(&inCritical, -1)
 
 				proj := s.Projects["/p"]
-				proj.Slug = "argus"
+				proj.Slug = "webapp"
 				s.SetProject("/p", proj)
 				return nil
 			})
@@ -168,7 +168,7 @@ func TestWithLockSerializesWriters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("final Open: %v", err)
 	}
-	if proj, ok := final.GetProject("/p"); !ok || proj.Slug != "argus" {
+	if proj, ok := final.GetProject("/p"); !ok || proj.Slug != "webapp" {
 		t.Errorf("final state missing or wrong: ok=%v slug=%q", ok, proj.Slug)
 	}
 }
@@ -204,7 +204,7 @@ func TestWithLockNoSaveOnError(t *testing.T) {
 func TestRecordHandoffAndReturn(t *testing.T) {
 	s := New()
 	now := time.Now().UTC().Truncate(time.Second)
-	s.SetProject("/p", ProjectState{Slug: "argus", ActiveSide: SideLocal})
+	s.SetProject("/p", ProjectState{Slug: "webapp", ActiveSide: SideLocal})
 	s.RecordHandoff("/p", now)
 	if got, _ := s.GetProject("/p"); got.ActiveSide != SideRemote || !got.LastHandoff.Equal(now) {
 		t.Errorf("after RecordHandoff: %+v", got)

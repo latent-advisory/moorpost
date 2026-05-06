@@ -236,7 +236,7 @@ func TestRunCost_RefreshesMonthToDateCache_ForMTD(t *testing.T) {
 	})
 
 	// Pre-state: cache holds a stale value.
-	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 49.85}
+	c.State.VMs["webapp-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 49.85}
 	if err := c.State.Save(c.StatePath); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestRunCost_RefreshesMonthToDateCache_ForMTD(t *testing.T) {
 		t.Fatalf("RunCost: %v", err)
 	}
 
-	rec := readVMRecord(t, c, "argus-vm")
+	rec := readVMRecord(t, c, "webapp-vm")
 	// Empty audit → rescaled compute = 0; Total = 0.
 	if rec.MonthToDateUSD != 0 {
 		t.Errorf("MonthToDateUSD = %v, want 0 (rescaled)", rec.MonthToDateUSD)
@@ -265,7 +265,7 @@ func TestRunCost_DoesNotRefreshCache_ForToday(t *testing.T) {
 	})
 
 	const preserved = 12.34
-	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
+	c.State.VMs["webapp-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
 	if err := c.State.Save(c.StatePath); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}
@@ -275,7 +275,7 @@ func TestRunCost_DoesNotRefreshCache_ForToday(t *testing.T) {
 		t.Fatalf("RunCost: %v", err)
 	}
 
-	rec := readVMRecord(t, c, "argus-vm")
+	rec := readVMRecord(t, c, "webapp-vm")
 	if rec.MonthToDateUSD != preserved {
 		t.Errorf("MonthToDateUSD = %v, want %v (today should not touch cache)", rec.MonthToDateUSD, preserved)
 	}
@@ -292,7 +292,7 @@ func TestRunCost_DoesNotRefreshCache_ForWeek(t *testing.T) {
 	})
 
 	const preserved = 7.77
-	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
+	c.State.VMs["webapp-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: preserved}
 	if err := c.State.Save(c.StatePath); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}
@@ -302,7 +302,7 @@ func TestRunCost_DoesNotRefreshCache_ForWeek(t *testing.T) {
 		t.Fatalf("RunCost: %v", err)
 	}
 
-	rec := readVMRecord(t, c, "argus-vm")
+	rec := readVMRecord(t, c, "webapp-vm")
 	if rec.MonthToDateUSD != preserved {
 		t.Errorf("MonthToDateUSD = %v, want %v (week should not touch cache)", rec.MonthToDateUSD, preserved)
 	}
@@ -320,7 +320,7 @@ func TestRunCost_RefreshesMonthToDateCache_NonEstimate(t *testing.T) {
 		IsEstimate: false,
 	})
 
-	c.State.VMs["argus-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 0}
+	c.State.VMs["webapp-vm"] = state.VMRecord{Provider: "fake", MonthToDateUSD: 0}
 	if err := c.State.Save(c.StatePath); err != nil {
 		t.Fatalf("save initial: %v", err)
 	}
@@ -330,7 +330,7 @@ func TestRunCost_RefreshesMonthToDateCache_NonEstimate(t *testing.T) {
 		t.Fatalf("RunCost: %v", err)
 	}
 
-	rec := readVMRecord(t, c, "argus-vm")
+	rec := readVMRecord(t, c, "webapp-vm")
 	if !floatNear(rec.MonthToDateUSD, 2.50, 1e-6) {
 		t.Errorf("MonthToDateUSD = %v, want 2.50 (non-estimate verbatim)", rec.MonthToDateUSD)
 	}

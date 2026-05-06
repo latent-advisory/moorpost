@@ -34,8 +34,18 @@ flow. Useful when the OAuth-token regex doesn't match a newer Claude Code
 release, or when scripting in CI. Setting the ANTHROPIC_API_KEY env var
 has the same effect.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// --token bypass: just stash whatever the user pasted.
+		// --token bypass: stash whatever the user pasted, but validate it
+		// looks like an actual Claude credential first. Without this, a
+		// stray invocation like `moorpost auth --token -` (or any
+		// short/garbage value) silently stores a useless string and the
+		// failure surfaces much later when remote claude prompts for OAuth
+		// — far from the actual cause. Real credentials are either
+		// long-lived OAuth tokens (sk-ant-oat01-…) or API keys
+		// (sk-ant-api03-…); both share the sk-ant-* prefix and are >20 chars.
 		if t := strings.TrimSpace(authFlagToken); t != "" {
+			if !strings.HasPrefix(t, "sk-ant-") || len(t) < 20 {
+				return fmt.Errorf("auth: --token value does not look like a Claude credential (expected sk-ant-* prefix, got %q); paste the actual token from `claude setup-token` or your API console", truncateForError(t))
+			}
 			kc, err := keychain.New()
 			if err != nil {
 				return fmt.Errorf("auth: keychain: %w", err)
@@ -70,6 +80,18 @@ has the same effect.`,
 func init() {
 	authCmd.Flags().StringVar(&authFlagToken, "token", "", "store this token directly in the keychain (skip the OAuth flow)")
 	rootCmd.AddCommand(authCmd)
+}
+
+// truncateForError returns a short, safe rendering of a candidate token
+// for error messages. Tokens are sensitive — even invalid ones may
+// echo onto a CI log — so we cap at 8 chars and add an ellipsis when
+// trimmed. Empty input renders as "" so the error message stays grammatical.
+func truncateForError(s string) string {
+	const max = 8
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 
 // RunAuth invokes the agent's local-auth flow and prints a summary. Exposed

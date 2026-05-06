@@ -30,19 +30,19 @@ func TestUpsertOnNonexistentFile(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "config")
 	m := NewManager(p)
-	err := m.Upsert("argus-vm", HostEntry{
-		HostName: "35.1.2.3", User: "landytang",
+	err := m.Upsert("webapp-vm", HostEntry{
+		HostName: "35.1.2.3", User: "alice",
 	})
 	if err != nil {
 		t.Fatalf("Upsert: %v", err)
 	}
 	body := read(t, p)
 	for _, want := range []string{
-		"# >>> moorpost begin: argus-vm >>>",
-		"Host argus-vm",
+		"# >>> moorpost begin: webapp-vm >>>",
+		"Host webapp-vm",
 		"HostName 35.1.2.3",
-		"User landytang",
-		"# <<< moorpost end: argus-vm <<<",
+		"User alice",
+		"# <<< moorpost end: webapp-vm <<<",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("file missing %q\n--- contents ---\n%s", want, body)
@@ -126,7 +126,7 @@ Host *.internal
 `
 	p := writeTemp(t, original)
 	m := NewManager(p)
-	if err := m.Upsert("argus-vm", HostEntry{HostName: "10.0.0.1"}); err != nil {
+	if err := m.Upsert("webapp-vm", HostEntry{HostName: "10.0.0.1"}); err != nil {
 		t.Fatal(err)
 	}
 	body := read(t, p)

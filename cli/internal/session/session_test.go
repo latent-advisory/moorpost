@@ -73,14 +73,14 @@ func (stubSync) ListConflicts(context.Context, sync.SyncSessionID) ([]sync.Confl
 }
 
 func TestNew(t *testing.T) {
-	s := New(stubProvider{}, stubAgent{}, stubSync{}, "argus", "/Users/x/argus")
+	s := New(stubProvider{}, stubAgent{}, stubSync{}, "webapp", "/Users/x/webapp")
 	if s.Provider == nil || s.Agent == nil || s.Sync == nil {
 		t.Fatal("Session has nil interface fields after New()")
 	}
-	if s.ProjectSlug != "argus" {
-		t.Errorf("ProjectSlug = %q, want argus", s.ProjectSlug)
+	if s.ProjectSlug != "webapp" {
+		t.Errorf("ProjectSlug = %q, want webapp", s.ProjectSlug)
 	}
-	if s.ProjectAbsDir != "/Users/x/argus" {
-		t.Errorf("ProjectAbsDir = %q, want /Users/x/argus", s.ProjectAbsDir)
+	if s.ProjectAbsDir != "/Users/x/webapp" {
+		t.Errorf("ProjectAbsDir = %q, want /Users/x/webapp", s.ProjectAbsDir)
 	}
 }

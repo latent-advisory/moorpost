@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { getStatus, workspaceRoot } from '../cli';
+import { getBootstrapTerminal } from '../runState';
 
 const CONFIG_RELATIVE = path.join('.moorpost', 'config.yaml');
 
@@ -45,6 +46,15 @@ export async function toggleSide(): Promise<void> {
     void vscode.window.showWarningMessage('Open a workspace folder first.');
     return;
   }
+  // If a bootstrap is currently running in a terminal we launched, route
+  // the click there instead of routing through the partial-status logic
+  // below. Without this guard, a click during the auth/init/provision
+  // window would fire signIn or provision on top of the running bootstrap.
+  const bootstrapTerm = getBootstrapTerminal();
+  if (bootstrapTerm) {
+    bootstrapTerm.show();
+    return;
+  }
   const status = await getStatus(cwd);
   if (!status) {
     await vscode.commands.executeCommand('moorpost.bootstrap');
@@ -62,11 +72,15 @@ export async function toggleSide(): Promise<void> {
     await vscode.commands.executeCommand('moorpost.provision');
     return;
   }
-  const side = status.active_side ?? 'local';
-  if (side === 'local') {
-    await vscode.commands.executeCommand('moorpost.handoff');
-  } else {
+  // Per-session routing: if any session is on remote, "switch sides" means
+  // bring one back. Only when ALL sessions are local (and the legacy whole-
+  // project active_side isn't 'remote' either) does click propose handoff.
+  const remoteCount = status.remote_sids?.length ?? 0;
+  const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
+  if (remoteCount > 0 || legacyRemote) {
     await vscode.commands.executeCommand('moorpost.return');
+  } else {
+    await vscode.commands.executeCommand('moorpost.handoff');
   }
 }
 

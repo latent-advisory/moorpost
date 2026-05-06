@@ -7,25 +7,35 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/latent-advisory/moorpost/cli/internal/audit"
 	"github.com/latent-advisory/moorpost/cli/internal/config"
 	"github.com/latent-advisory/moorpost/cli/internal/state"
 	mpsync "github.com/latent-advisory/moorpost/cli/internal/sync"
 )
 
+// emptyAuditReader makes computeMTDCost return 0 so tests exercise the
+// cached-value fallback path (MonthToDateUSD from state).
+func injectEmptyAudit(t *testing.T) {
+	t.Helper()
+	old := auditReaderForCost
+	t.Cleanup(func() { auditReaderForCost = old })
+	auditReaderForCost = func(int) ([]audit.Entry, error) { return nil, nil }
+}
+
 func makeContext(t *testing.T) *Context {
 	t.Helper()
 	cfg := config.Default()
-	cfg.ProjectSlug = "argus"
+	cfg.ProjectSlug = "webapp"
 	cfg.Provider.Type = "gcp"
 	cfg.Agent.Type = "claude-code"
 	cfg.Sync.Engine = "mutagen"
 	st := state.New()
-	st.SetProject("/abs/argus", state.ProjectState{
-		Slug:       "argus",
-		VMID:       "argus-vm",
+	st.SetProject("/abs/webapp", state.ProjectState{
+		Slug:       "webapp",
+		VMID:       "webapp-vm",
 		ActiveSide: state.SideLocal,
 	})
-	st.VMs["argus-vm"] = state.VMRecord{
+	st.VMs["webapp-vm"] = state.VMRecord{
 		Provider:       "gcp",
 		ExternalIP:     "35.1.2.3",
 		StateCache:     "stopped",
@@ -34,11 +44,12 @@ func makeContext(t *testing.T) *Context {
 	return &Context{
 		Config:     cfg,
 		State:      st,
-		ProjectDir: "/abs/argus",
+		ProjectDir: "/abs/webapp",
 	}
 }
 
 func TestRunStatusText(t *testing.T) {
+	injectEmptyAudit(t)
 	c := makeContext(t)
 	var out bytes.Buffer
 	if err := RunStatus(&out, c, false); err != nil {
@@ -46,9 +57,9 @@ func TestRunStatusText(t *testing.T) {
 	}
 	s := out.String()
 	for _, want := range []string{
-		"argus", "gcp", "claude-code", "mutagen",
+		"webapp", "gcp", "claude-code", "mutagen",
 		"local", // active side
-		"argus-vm", "stopped",
+		"webapp-vm", "stopped",
 		"$1.42",
 	} {
 		if !strings.Contains(s, want) {
@@ -58,6 +69,7 @@ func TestRunStatusText(t *testing.T) {
 }
 
 func TestRunStatusJSON(t *testing.T) {
+	injectEmptyAudit(t)
 	c := makeContext(t)
 	var out bytes.Buffer
 	if err := RunStatus(&out, c, true); err != nil {
@@ -67,7 +79,7 @@ func TestRunStatusJSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &report); err != nil {
 		t.Fatalf("JSON unmarshal: %v\noutput: %s", err, out.String())
 	}
-	if report.Project != "argus" || report.Provider != "gcp" || report.VMID != "argus-vm" {
+	if report.Project != "webapp" || report.Provider != "gcp" || report.VMID != "webapp-vm" {
 		t.Errorf("report = %+v", report)
 	}
 	if report.MTDCostUSD != 1.42 {
@@ -113,7 +125,7 @@ func TestRunStatusJSON_Conflicts(t *testing.T) {
 	c := makeContext(t)
 	// Add a sync session id and wire a fake sync that reports 3 conflicts.
 	ps, _ := c.State.GetProject(c.ProjectDir)
-	ps.SyncSessionID = "argus-handoff"
+	ps.SyncSessionID = "webapp-handoff"
 	c.State.SetProject(c.ProjectDir, ps)
 	c.Sync = &statusFakeSync{statusReturn: mpsync.SyncStatus{Conflicts: 3}}
 
@@ -128,7 +140,7 @@ func TestRunStatusJSON_Conflicts(t *testing.T) {
 	if !report.HasSyncSession {
 		t.Error("HasSyncSession=false; want true")
 	}
-	if report.SyncSessionID != "argus-handoff" {
+	if report.SyncSessionID != "webapp-handoff" {
 		t.Errorf("SyncSessionID = %q", report.SyncSessionID)
 	}
 	if report.Conflicts != 3 {
@@ -158,7 +170,7 @@ func TestRunStatusJSON_NoSyncSession_OmitsConflicts(t *testing.T) {
 func TestRunStatusJSON_SyncStatusError_PreservesZero(t *testing.T) {
 	c := makeContext(t)
 	ps, _ := c.State.GetProject(c.ProjectDir)
-	ps.SyncSessionID = "argus-handoff"
+	ps.SyncSessionID = "webapp-handoff"
 	c.State.SetProject(c.ProjectDir, ps)
 	c.Sync = &statusFakeSync{statusErr: errSyncDown}
 

@@ -136,14 +136,14 @@ func TestSanitizeRedactsSensitive(t *testing.T) {
 	in := Entry{
 		Command: "auth",
 		Args: []string{
-			"--gcp-project=latent-advisory",
+			"--gcp-project=example-project",
 			"--ssh-key=/home/me/.ssh/id_ed25519",
 			"normal-arg",
 			"ANTHROPIC_API_KEY=sk-ant-xxxxx",
 		},
 	}
 	out := sanitize(in)
-	if out.Args[0] != "--gcp-project=latent-advisory" {
+	if out.Args[0] != "--gcp-project=example-project" {
 		t.Errorf("non-sensitive arg lost: %q", out.Args[0])
 	}
 	if !strings.Contains(out.Args[1], "<redacted>") {

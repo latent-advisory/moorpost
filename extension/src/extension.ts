@@ -10,12 +10,26 @@ import { setupStatusBar } from './statusBar';
 import { MoorpostTreeProvider } from './treeView';
 import { IdleMonitor } from './idleMonitor';
 import { registerClaudeTerminalWatchers } from './claudeTerminal';
+import { SessionTracker } from './sessionTracker';
+
+let sessionTracker: SessionTracker | undefined;
+
+export function getSessionTracker(): SessionTracker | undefined {
+  return sessionTracker;
+}
 
 export function activate(context: vscode.ExtensionContext): void {
+  sessionTracker = new SessionTracker();
+  context.subscriptions.push({ dispose: () => sessionTracker?.dispose() });
+
   const treeProvider = new MoorpostTreeProvider();
   context.subscriptions.push(
     vscode.window.registerTreeDataProvider('moorpost.projectTree', treeProvider),
     vscode.commands.registerCommand('moorpost.refreshTree', () => treeProvider.refresh()),
+    vscode.commands.registerCommand('moorpost.debugSessionTracker', () => {
+      const text = sessionTracker?.describe() ?? 'SessionTracker not initialized';
+      vscode.window.showInformationMessage(text, { modal: true });
+    }),
   );
 
   registerCommands(context, treeProvider);

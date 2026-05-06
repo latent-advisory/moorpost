@@ -24,7 +24,7 @@ func TestRunnerRunBuildsArgs(t *testing.T) {
 	// empty Args slice meaning "any args", we instead capture via a custom
 	// runner test below.
 	r := NewRunner(fx)
-	stdout, _, code, err := r.Run(context.Background(), "argus-vm", "echo hi")
+	stdout, _, code, err := r.Run(context.Background(), "webapp-vm", "echo hi")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -42,13 +42,13 @@ func TestRunnerArgsContainBatchModeAndHost(t *testing.T) {
 	// directly, so we use a one-off recorder.
 	rec := &recorder{stdout: []byte("ok")}
 	r := NewRunner(rec)
-	if _, _, _, err := r.Run(context.Background(), "argus-vm", "uptime"); err != nil {
+	if _, _, _, err := r.Run(context.Background(), "webapp-vm", "uptime"); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if rec.name != "ssh" {
 		t.Errorf("binary = %q, want ssh", rec.name)
 	}
-	if !contains(rec.args, "argus-vm") {
+	if !contains(rec.args, "webapp-vm") {
 		t.Errorf("args missing host: %v", rec.args)
 	}
 	if !contains(rec.args, "BatchMode=yes") {

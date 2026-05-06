@@ -2,7 +2,7 @@
   "name": "moorpost",
   "displayName": "Moorpost",
   "description": "Tether your laptop to a remote forward base where Claude Code keeps working.",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "publisher": "latent-advisory",
   "license": "Apache-2.0",
   "homepage": "https://github.com/latent-advisory/moorpost",
@@ -86,6 +86,28 @@
       {
         "command": "moorpost.showConflicts",
         "title": "Moorpost: Show sync conflicts",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.showSessions",
+        "title": "Moorpost: Show sessions (local + remote)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.returnSession",
+        "title": "Moorpost: Return this session to local",
+        "icon": "$(arrow-down)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.openRemoteSession",
+        "title": "Moorpost: Open remote session",
+        "icon": "$(link-external)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.debugSessionTracker",
+        "title": "Moorpost: Debug session tracker",
         "category": "Moorpost"
       },
       {
@@ -190,6 +212,17 @@
           "group": "moorpost@1"
         },
         {
+          "command": "moorpost.return",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.remoteSessionsRoot",
+          "group": "moorpost@1",
+          "title": "Return..."
+        },
+        {
+          "command": "moorpost.returnSession",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.remoteSession",
+          "group": "inline"
+        },
+        {
           "command": "moorpost.attach",
           "when": "view == moorpost.projectTree && viewItem == moorpost.vm",
           "group": "moorpost@1"
@@ -241,6 +274,27 @@
           "type": "boolean",
           "default": true,
           "description": "After a successful Handoff, automatically open an integrated terminal attached to the remote Claude session. Disable if you prefer to attach manually."
+        },
+        "moorpost.autoMigrateOnHandoff": {
+          "type": "boolean",
+          "default": false,
+          "description": "When Handoff swaps the plugin surface, skip the 'Migrate this conversation?' prompt and silently open a fresh chat on the remote VM that resumes the prior session. The model retains full context; the plugin panel scrollback resets (prior messages remain in Claude Code's history list). Off by default — the prompt is shown so the scrollback reset is opt-in per handoff."
+        },
+        "moorpost.autoStopWhenNoRemoteSessions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically stop the project's VM when no sessions are routed to remote. Catches the rare case where the previous return's stop request was rejected (network blip, GCE fingerprint race) or state reached this configuration via a path that bypassed the return CLI's stop hook. Throttled to once per 90s so we don't fire repeated stops while the previous async stop is still mid-transition. Set to false to keep the VM warm for quick subsequent handoffs."
+        },
+        "moorpost.handoffSurface": {
+          "type": "string",
+          "enum": ["auto", "terminal", "plugin"],
+          "enumDescriptions": [
+            "Detect from current state — terminal if a Moorpost: Claude terminal is open, plugin if the Anthropic Claude Code plugin is installed and routed, otherwise terminal.",
+            "Always swap the Moorpost: Claude terminal; never touch the Anthropic Claude Code plugin's wrapper.",
+            "Always re-route the Anthropic Claude Code plugin's panel; never spawn a Moorpost: Claude terminal."
+          ],
+          "default": "auto",
+          "description": "Which surface Handoff and Return should swap (terminal, plugin panel, or auto-detect). Use this if 'auto' picks the wrong surface for your workflow."
         }
       }
     }
@@ -249,7 +303,8 @@
     "build": "node esbuild.js",
     "watch": "node esbuild.js --watch",
     "package": "vsce package --no-dependencies",
-    "vscode:prepublish": "node esbuild.js --production"
+    "vscode:prepublish": "node esbuild.js --production",
+    "test": "node --experimental-transform-types --disable-warning=ExperimentalWarning --import ./test/loader-register.mjs --test 'src/**/*.test.mts'"
   },
   "devDependencies": {
     "@types/node": "^20",

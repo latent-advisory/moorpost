@@ -10,7 +10,7 @@
 //   - Cleanup runs even on test failure (t.Cleanup)
 //
 // Required env (or defaults):
-//   MOORPOST_E2E_PROJECT (default: latent-advisory)
+//   MOORPOST_E2E_PROJECT (default: example-project)
 //   MOORPOST_E2E_ZONE    (default: us-central1-a)
 
 package gcp
@@ -75,7 +75,7 @@ func runGcloud(ctx context.Context, args ...string) (string, string, int, error)
 }
 
 func TestGCPProvision_E2E(t *testing.T) {
-	project := envOr("MOORPOST_E2E_PROJECT", "latent-advisory")
+	project := envOr("MOORPOST_E2E_PROJECT", "example-project")
 	zone := envOr("MOORPOST_E2E_ZONE", "us-central1-a")
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -108,7 +108,7 @@ func TestGCPProvision_E2E(t *testing.T) {
 	pubKey := generateEd25519PubKey(t)
 	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
 		ProjectSlug:  "e2e",
-		LocalAbsPath: "/Users/landytang/Documents/Claude/Projects/AI M&A/code/argus",
+		LocalAbsPath: "/Users/alice/Documents/My Project & Co/code/webapp",
 		RemoteUser:   "moorpost",
 	})
 	if err != nil {
@@ -207,7 +207,7 @@ func TestGCPProvision_E2E(t *testing.T) {
 //
 // Runtime budget: ~6 minutes. Cost: ~$0.002.
 func TestGCPBootstrap_E2E(t *testing.T) {
-	project := envOr("MOORPOST_E2E_PROJECT", "latent-advisory")
+	project := envOr("MOORPOST_E2E_PROJECT", "example-project")
 	zone := envOr("MOORPOST_E2E_ZONE", "us-central1-a")
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
@@ -237,7 +237,7 @@ func TestGCPBootstrap_E2E(t *testing.T) {
 	pubKey := generateEd25519PubKey(t)
 	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
 		ProjectSlug:  "e2e-bootstrap",
-		LocalAbsPath: "/Users/landytang/argus", // simple path so symlink works
+		LocalAbsPath: "/Users/alice/webapp", // simple path so symlink works
 		RemoteUser:   "moorpost",
 	})
 	if err != nil {
@@ -336,7 +336,7 @@ func TestGCPBootstrap_E2E(t *testing.T) {
 //
 // Runtime budget: ~15-20 minutes. Cost: ~$0.005.
 func TestGCPPersistentAutoStop_E2E(t *testing.T) {
-	project := envOr("MOORPOST_E2E_PROJECT", "latent-advisory")
+	project := envOr("MOORPOST_E2E_PROJECT", "example-project")
 	zone := envOr("MOORPOST_E2E_ZONE", "us-central1-a")
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
@@ -372,7 +372,7 @@ func TestGCPPersistentAutoStop_E2E(t *testing.T) {
 	const intervalMinutes = 1
 	bootScript, err := bootstrap.Render(bootstrap.BootstrapVars{
 		ProjectSlug:          "e2e-autostop",
-		LocalAbsPath:         "/Users/landytang/argus",
+		LocalAbsPath:         "/Users/alice/webapp",
 		RemoteUser:           "moorpost",
 		IdleAutoStopMinutes:  thresholdMinutes,
 		CheckIntervalMinutes: intervalMinutes,

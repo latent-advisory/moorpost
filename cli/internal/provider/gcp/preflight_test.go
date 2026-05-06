@@ -57,7 +57,7 @@ func TestPreflightAPIDisabled(t *testing.T) {
 	for _, want := range []string{
 		"Compute Engine API not enabled",
 		"gcloud services enable compute.googleapis.com",
-		"--project=latent-advisory",
+		"--project=example-project",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("err should contain %q\nfull: %v", want, err)

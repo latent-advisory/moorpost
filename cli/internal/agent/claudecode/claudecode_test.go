@@ -101,8 +101,8 @@ func TestSessionStatePath(t *testing.T) {
 		want string // tail after <home>/.claude/projects/
 	}{
 		{"empty", "", ""},
-		{"argus", "/Users/landytang/argus", "-Users-landytang-argus"},
-		{"AI M&A", "/Users/landytang/Documents/Claude/Projects/AI M&A", "-Users-landytang-Documents-Claude-Projects-AI-M-A"},
+		{"webapp", "/Users/alice/webapp", "-Users-alice-webapp"},
+		{"path with space and ampersand", "/Users/alice/Documents/My Project & Co", "-Users-alice-Documents-My-Project---Co"},
 		{"hidden subdir", "/path/.claude/x", "-path--claude-x"},
 		{"existing dashes preserved", "/claw-playground/groovy", "-claw-playground-groovy"},
 		{"unicode replaced", "/path/résumé", "-path-r-sum-"},
@@ -416,7 +416,7 @@ func TestResumeStartsNewSession(t *testing.T) {
 	if err := a.kc.Store(KeychainService, KeychainAccount, []byte("sk-ant-oat01-cached")); err != nil {
 		t.Fatalf("Store: %v", err)
 	}
-	ref := agent.SessionRef{ProjectSlug: "argus", SessionID: "session-abc"}
+	ref := agent.SessionRef{ProjectSlug: "webapp", SessionID: "session-abc"}
 	if err := a.Resume(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestResumeStartsNewSession(t *testing.T) {
 		t.Fatalf("expected 1 NewSession, got %d", len(tx.newSessionLog))
 	}
 	c := tx.newSessionLog[0]
-	if c.name != "argus" {
+	if c.name != "webapp" {
 		t.Errorf("session name = %q", c.name)
 	}
 	if c.cmd != "claude --resume session-abc" {
@@ -435,10 +435,49 @@ func TestResumeStartsNewSession(t *testing.T) {
 	}
 }
 
+func TestResumePrefixesCdToProjectAbsDir(t *testing.T) {
+	// Regression: without `cd <ProjectAbsDir>` claude inherits the SSH
+	// session's $HOME as cwd and writes new session-state to a second
+	// encoding (`-home-moorpost-...`) that `moorpost return` doesn't
+	// sync back. Exercised with a path containing both a space and an
+	// `&` to verify shell quoting of metacharacters.
+	tx := &fakeTmux{exists: false}
+	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
+	ref := agent.SessionRef{
+		ProjectSlug:   "my-project",
+		ProjectAbsDir: "/Users/alice/Documents/My Project & Co",
+		SessionID:     "session-abc",
+	}
+	if err := a.Resume(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := `cd '/Users/alice/Documents/My Project & Co' && claude --resume session-abc`
+	if tx.newSessionLog[0].cmd != want {
+		t.Errorf("cmd = %q\nwant   %q", tx.newSessionLog[0].cmd, want)
+	}
+}
+
+func TestResumeShellQuotesEmbeddedSingleQuote(t *testing.T) {
+	tx := &fakeTmux{exists: false}
+	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
+	ref := agent.SessionRef{
+		ProjectSlug:   "x",
+		ProjectAbsDir: "/tmp/o'malley/proj",
+		SessionID:     "s",
+	}
+	if err := a.Resume(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
+		t.Fatalf("Resume: %v", err)
+	}
+	want := `cd '/tmp/o'\''malley/proj' && claude --resume s`
+	if tx.newSessionLog[0].cmd != want {
+		t.Errorf("cmd = %q\nwant   %q", tx.newSessionLog[0].cmd, want)
+	}
+}
+
 func TestResumeNoSessionIDStartsFreshClaude(t *testing.T) {
 	tx := &fakeTmux{exists: false}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	if err := a.Resume(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -450,7 +489,7 @@ func TestResumeNoSessionIDStartsFreshClaude(t *testing.T) {
 func TestResumeExistingSessionIsNoOp(t *testing.T) {
 	tx := &fakeTmux{exists: true}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus", SessionID: "x"}
+	ref := agent.SessionRef{ProjectSlug: "webapp", SessionID: "x"}
 	if err := a.Resume(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Fatalf("Resume: %v", err)
 	}
@@ -472,7 +511,7 @@ func TestResumeRejectsBadInput(t *testing.T) {
 func TestIsActive(t *testing.T) {
 	tx := &fakeTmux{exists: true}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	got, err := a.IsActive(context.Background(), agent.SSHTarget{Host: "vm"}, ref)
 	if err != nil || !got {
 		t.Errorf("IsActive(true) = (%v, %v)", got, err)
@@ -487,7 +526,7 @@ func TestIsActive(t *testing.T) {
 func TestPauseNoSession(t *testing.T) {
 	tx := &fakeTmux{exists: false}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	if err := a.Pause(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Errorf("Pause on missing session = %v, want nil", err)
 	}
@@ -500,7 +539,7 @@ func TestPauseWaitsForReady(t *testing.T) {
 		captureSeq: []string{"running tools...\n", "writing file abc.go\n", "> "},
 	}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	if err := a.Pause(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Fatalf("Pause: %v", err)
 	}
@@ -513,7 +552,7 @@ func TestPauseRespectsContextCancellation(t *testing.T) {
 	// Captures never show ready; ensure Pause exits when ctx is canceled.
 	tx := &fakeTmux{exists: true, captureSeq: []string{"running...\n"}}
 	a := newAgentWithTmux(t, tx, &fakeSSHRunner{})
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	err := a.Pause(ctx, agent.SSHTarget{Host: "vm"}, ref)
@@ -553,7 +592,7 @@ func TestPauseReadyRegexCustomizable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := agent.SessionRef{ProjectSlug: "argus"}
+	ref := agent.SessionRef{ProjectSlug: "webapp"}
 	if err := a.Pause(context.Background(), agent.SSHTarget{Host: "vm"}, ref); err != nil {
 		t.Errorf("Pause: %v", err)
 	}

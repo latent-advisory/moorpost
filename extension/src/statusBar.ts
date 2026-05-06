@@ -1,11 +1,20 @@
-// Status bar item — single bar item that summarizes the project's current
-// state and updates periodically via `moorpost status --json`.
+// Status bar item — the project-state bar (active_side / vm_state / cost
+// / remote-session count). Updates periodically via `moorpost status --json`.
 
 import * as vscode from 'vscode';
-import { getStatus, workspaceRoot } from './cli';
+import * as cp from 'child_process';
+import { cliBinary, getStatus, StatusReport, workspaceRoot } from './cli';
+import { isBootstrapping, onRunStateChanged } from './runState';
+import { logToChannel } from './output';
 
 let item: vscode.StatusBarItem | undefined;
 let refreshTimer: NodeJS.Timeout | undefined;
+// Throttle the auto-stop watcher so a transient running-but-no-sessions
+// observation doesn't fire `moorpost down` repeatedly while the VM is
+// actually mid-stop. 90s gives a generous window for the previous stop
+// request to complete (gcloud --async returns ~1-2s but VM transitions
+// can take 60s+).
+let lastAutoStopAttemptMs = 0;
 
 /**
  * Force an immediate status-bar refresh. Use after commands that change
@@ -28,6 +37,10 @@ export function setupStatusBar(context: vscode.ExtensionContext): void {
   context.subscriptions.push(item);
 
   scheduleRefresh(context);
+  // Refresh immediately whenever a long-running command (currently just
+  // bootstrap) starts or ends, so users see the "setting up…" state flip
+  // in / out without waiting for the next polling tick.
+  onRunStateChanged(() => void refresh());
   void refresh();
 }
 
@@ -42,6 +55,17 @@ function scheduleRefresh(context: vscode.ExtensionContext): void {
 
 async function refresh(): Promise<void> {
   if (!item) return;
+  // Bootstrap-in-progress takes precedence over any other state. While
+  // bootstrap is walking the project through "no config → no auth → no VM
+  // → ready", clicking the bar must NOT route to whatever toggleSide would
+  // pick from the partial status; toggleSide handles this same case by
+  // focusing the terminal so the user sees what's happening.
+  if (isBootstrapping()) {
+    item.text = '$(sync~spin) Moorpost: setting up…';
+    item.tooltip = 'Bootstrap is running in the terminal. Click to focus it.';
+    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+    return;
+  }
   const cwd = workspaceRoot();
   const status = await getStatus(cwd);
   if (!status) {
@@ -68,10 +92,26 @@ async function refresh(): Promise<void> {
     item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
     return;
   }
-  // Configured and provisioned — show normal active-side summary.
+  // Configured and provisioned — show summary that reflects per-session
+  // routing. With per-session handoffs, `active_side` is the legacy
+  // whole-project flag; the per-session truth lives in remote_sids.
+  // Showing "local" while one session is actually running on the VM is
+  // misleading, so derive the label from remote_sids.length.
   item.backgroundColor = undefined;
-  const side = status.active_side ?? 'local';
-  const icon = side === 'remote' ? '$(cloud)' : '$(home)';
+  const remoteCount = status.remote_sids?.length ?? 0;
+  const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
+  let sideLabel: string;
+  let icon: string;
+  if (remoteCount > 0) {
+    sideLabel = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
+    icon = '$(cloud)';
+  } else if (legacyRemote) {
+    sideLabel = 'remote';
+    icon = '$(cloud)';
+  } else {
+    sideLabel = 'local';
+    icon = '$(home)';
+  }
   const vmState = status.vm_state ? ` · ${status.vm_state}` : '';
   // Show MTD cost whenever the field is present in the JSON, even when
   // it's $0.00 — the user gets visible confirmation that cost tracking
@@ -80,8 +120,60 @@ async function refresh(): Promise<void> {
     typeof status.month_to_date_usd === 'number'
       ? ` · $${status.month_to_date_usd.toFixed(2)}`
       : '';
-  item.text = `${icon} Moorpost · ${side}${vmState}${cost}`;
+  item.text = `${icon} Moorpost · ${sideLabel}${vmState}${cost}`;
   item.tooltip = renderTooltip(status);
+
+  // Auto-stop watcher: when no sessions are routed to remote AND the
+  // VM is still running, fire `moorpost down`. Catches the rare case
+  // where the previous stop was rejected (network blip, GCE
+  // fingerprint race) or the user reached this state via a path
+  // that bypassed the return CLI's auto-stop hook (e.g., direct
+  // state.json edit, crash recovery).
+  //
+  // Throttled to once per 90s so we don't fire repeated stop requests
+  // while the previous async stop is still mid-transition.
+  maybeAutoStop(status);
+}
+
+function maybeAutoStop(status: StatusReport): void {
+  const remoteCount = status.remote_sids?.length ?? 0;
+  const isRunning = status.vm_state === 'running';
+  if (remoteCount > 0 || !isRunning) {
+    return;
+  }
+  const now = Date.now();
+  if (now - lastAutoStopAttemptMs < 90 * 1000) {
+    return;
+  }
+  // Respect a user opt-out for power users who want to keep the VM
+  // warm for quick handoffs.
+  const enabled =
+    vscode.workspace
+      .getConfiguration('moorpost')
+      .get<boolean>('autoStopWhenNoRemoteSessions', true);
+  if (!enabled) return;
+
+  lastAutoStopAttemptMs = now;
+  const cwd = workspaceRoot();
+  if (!cwd) return;
+  logToChannel(
+    `auto-stop: remote_sids=[] but vm_state=running — invoking \`moorpost down\``,
+  );
+  // Fire-and-forget. `moorpost down` calls Provider.Stop with --async,
+  // so it returns in 1-2s. We don't await — the next refresh tick will
+  // pick up the new vm_state.
+  cp.execFile(
+    cliBinary(),
+    ['down'],
+    { cwd, timeout: 30_000 },
+    (err, stdout, stderr) => {
+      if (err) {
+        logToChannel(`auto-stop: \`moorpost down\` failed: ${String(err)} (stderr: ${stderr.trim()})`);
+      } else {
+        logToChannel(`auto-stop: \`moorpost down\` ok — ${stdout.trim()}`);
+      }
+    },
+  );
 }
 
 function renderTooltip(s: ReturnType<typeof renderTooltipShape>): string {
@@ -92,7 +184,11 @@ function renderTooltip(s: ReturnType<typeof renderTooltipShape>): string {
     `Sync engine:   ${s.sync}`,
     `Mode:          ${s.mode}`,
   ];
-  if (s.active_side) lines.push(`Active side:   ${s.active_side}`);
+  if (s.active_side) lines.push(`Active side:   ${s.active_side} (legacy)`);
+  const remoteCount = s.remote_sids?.length ?? 0;
+  if (remoteCount > 0) {
+    lines.push(`Remote sessions: ${remoteCount}`);
+  }
   if (s.vm_id) lines.push(`VM:            ${s.vm_id}`);
   if (s.vm_state) lines.push(`VM state:      ${s.vm_state}`);
   if (s.month_to_date_usd) lines.push(`Month-to-date: $${s.month_to_date_usd.toFixed(2)}`);

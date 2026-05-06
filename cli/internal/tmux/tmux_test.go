@@ -53,7 +53,7 @@ func argsContain(args []string, want string) bool {
 func TestHasSessionTrue(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 0}}
 	tx := NewLocal(r)
-	ok, err := tx.HasSession(context.Background(), "argus")
+	ok, err := tx.HasSession(context.Background(), "webapp")
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestHasSessionTrue(t *testing.T) {
 	if !argsContain(r.lastArgs(), "has-session") {
 		t.Errorf("args missing has-session: %v", r.lastArgs())
 	}
-	if !argsContain(r.lastArgs(), "argus") {
+	if !argsContain(r.lastArgs(), "webapp") {
 		t.Errorf("args missing target: %v", r.lastArgs())
 	}
 }
@@ -71,7 +71,7 @@ func TestHasSessionTrue(t *testing.T) {
 func TestHasSessionFalse(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 1, stderr: []byte("can't find session")}}
 	tx := NewLocal(r)
-	ok, err := tx.HasSession(context.Background(), "argus")
+	ok, err := tx.HasSession(context.Background(), "webapp")
 	if err != nil {
 		t.Fatalf("HasSession: %v", err)
 	}
@@ -83,7 +83,7 @@ func TestHasSessionFalse(t *testing.T) {
 func TestNewSessionEnvSorted(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 0}}
 	tx := NewLocal(r)
-	err := tx.NewSession(context.Background(), "argus", "claude", map[string]string{
+	err := tx.NewSession(context.Background(), "webapp", "claude", map[string]string{
 		"FOO":                       "1",
 		"CLAUDE_CODE_OAUTH_TOKEN":   "tok",
 		"BAR":                       "2",
@@ -111,7 +111,7 @@ func TestNewSessionEnvSorted(t *testing.T) {
 	if !argsContain(args, "-d") {
 		t.Errorf("args missing -d (detached): %v", args)
 	}
-	if !argsContain(args, "argus") {
+	if !argsContain(args, "webapp") {
 		t.Errorf("args missing session name: %v", args)
 	}
 	if args[len(args)-1] != "claude" {
@@ -120,9 +120,9 @@ func TestNewSessionEnvSorted(t *testing.T) {
 }
 
 func TestNewSessionDuplicateMaps(t *testing.T) {
-	r := &recorder{resp: recorderCall{exitCode: 1, stderr: []byte("duplicate session: argus")}}
+	r := &recorder{resp: recorderCall{exitCode: 1, stderr: []byte("duplicate session: webapp")}}
 	tx := NewLocal(r)
-	err := tx.NewSession(context.Background(), "argus", "claude", nil)
+	err := tx.NewSession(context.Background(), "webapp", "claude", nil)
 	if !errors.Is(err, ErrSessionExists) {
 		t.Errorf("err = %v, want ErrSessionExists", err)
 	}
@@ -130,7 +130,7 @@ func TestNewSessionDuplicateMaps(t *testing.T) {
 
 func TestNewSessionRequiresCmd(t *testing.T) {
 	tx := NewLocal(&recorder{})
-	if err := tx.NewSession(context.Background(), "argus", "", nil); err == nil {
+	if err := tx.NewSession(context.Background(), "webapp", "", nil); err == nil {
 		t.Error("accepted empty cmd")
 	}
 }
@@ -138,14 +138,14 @@ func TestNewSessionRequiresCmd(t *testing.T) {
 func TestSendKeys(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 0}}
 	tx := NewLocal(r)
-	if err := tx.SendKeys(context.Background(), "argus:0", "claude --resume abc", "Enter"); err != nil {
+	if err := tx.SendKeys(context.Background(), "webapp:0", "claude --resume abc", "Enter"); err != nil {
 		t.Fatalf("SendKeys: %v", err)
 	}
 	args := r.lastArgs()
 	if !argsContain(args, "send-keys") {
 		t.Errorf("args missing send-keys: %v", args)
 	}
-	if !argsContain(args, "argus:0") {
+	if !argsContain(args, "webapp:0") {
 		t.Errorf("args missing target: %v", args)
 	}
 	if !argsContain(args, "Enter") {
@@ -161,15 +161,15 @@ func TestSendKeysRequiresInputs(t *testing.T) {
 	if err := tx.SendKeys(context.Background(), "", "x"); err == nil {
 		t.Error("accepted empty target")
 	}
-	if err := tx.SendKeys(context.Background(), "argus"); err == nil {
+	if err := tx.SendKeys(context.Background(), "webapp"); err == nil {
 		t.Error("accepted no keys")
 	}
 }
 
 func TestKillSessionIdempotent(t *testing.T) {
-	r := &recorder{resp: recorderCall{exitCode: 1, stderr: []byte("can't find session: argus")}}
+	r := &recorder{resp: recorderCall{exitCode: 1, stderr: []byte("can't find session: webapp")}}
 	tx := NewLocal(r)
-	if err := tx.KillSession(context.Background(), "argus"); err != nil {
+	if err := tx.KillSession(context.Background(), "webapp"); err != nil {
 		t.Errorf("KillSession on missing returned %v, want nil", err)
 	}
 }
@@ -177,7 +177,7 @@ func TestKillSessionIdempotent(t *testing.T) {
 func TestKillSessionRealError(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 2, stderr: []byte("permission denied")}}
 	tx := NewLocal(r)
-	if err := tx.KillSession(context.Background(), "argus"); err == nil {
+	if err := tx.KillSession(context.Background(), "webapp"); err == nil {
 		t.Error("KillSession swallowed real error")
 	}
 }
@@ -195,13 +195,13 @@ func TestListSessionsEmpty(t *testing.T) {
 }
 
 func TestListSessionsParses(t *testing.T) {
-	r := &recorder{resp: recorderCall{exitCode: 0, stdout: []byte("argus\nworkbench\n")}}
+	r := &recorder{resp: recorderCall{exitCode: 0, stdout: []byte("webapp\nworkbench\n")}}
 	tx := NewLocal(r)
 	got, err := tx.ListSessions(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	want := []string{"argus", "workbench"}
+	want := []string{"webapp", "workbench"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Errorf("got %v, want %v", got, want)
 	}
@@ -225,7 +225,7 @@ func TestListSessionsZeroLines(t *testing.T) {
 func TestCapturePaneArgs(t *testing.T) {
 	r := &recorder{resp: recorderCall{exitCode: 0, stdout: []byte("> ready\n")}}
 	tx := NewLocal(r)
-	out, err := tx.CapturePane(context.Background(), "argus:0.0", 50)
+	out, err := tx.CapturePane(context.Background(), "webapp:0.0", 50)
 	if err != nil {
 		t.Fatalf("CapturePane: %v", err)
 	}
@@ -276,14 +276,14 @@ func TestRemoteWithFakeSSH(t *testing.T) {
 	// We need an ssh.Runner. Use the real-package interface but with a
 	// recorder Executor underneath via NewRunner. The remote runner builds a
 	// shell command of the form `tmux <quoted args>`.
-	captured := &recorder{resp: recorderCall{exitCode: 0, stdout: []byte("argus\n")}}
+	captured := &recorder{resp: recorderCall{exitCode: 0, stdout: []byte("webapp\n")}}
 	// Use the real ssh.NewRunner with our recorder Executor.
 	tx := NewRemote(mpssh.NewRunner(captured), "host")
 	got, err := tx.ListSessions(context.Background())
 	if err != nil {
 		t.Fatalf("ListSessions: %v", err)
 	}
-	if len(got) != 1 || got[0] != "argus" {
+	if len(got) != 1 || got[0] != "webapp" {
 		t.Errorf("got %v", got)
 	}
 	// The recorded call should have name "ssh" and args ending in "tmux 'list-sessions' '-F' '#S'"
@@ -320,7 +320,7 @@ func TestShellQuoteHandlesSingleQuote(t *testing.T) {
 func TestNewSessionPropagatesUnderlyingError(t *testing.T) {
 	r := &recorder{resp: recorderCall{err: errors.New("exec failure")}}
 	tx := NewLocal(r)
-	if err := tx.NewSession(context.Background(), "argus", "claude", nil); err == nil || !strings.Contains(err.Error(), "exec failure") {
+	if err := tx.NewSession(context.Background(), "webapp", "claude", nil); err == nil || !strings.Contains(err.Error(), "exec failure") {
 		t.Errorf("err = %v, want underlying", err)
 	}
 }

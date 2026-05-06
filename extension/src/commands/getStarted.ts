@@ -5,7 +5,8 @@
 // it duplicated both paths without adding value.
 
 import * as vscode from 'vscode';
-import { runInTerminal } from '../cli';
+import { listGCloudConfigs, runInTerminal, type GCloudConfig } from '../cli';
+import { setBootstrapTerminal } from '../runState';
 
 /**
  * One-shot bootstrap. Asks which folder to initialize (multi-root only),
@@ -51,9 +52,81 @@ export async function bootstrapProject(): Promise<void> {
   );
   if (!provisionChoice) return;
 
+  // Pre-select the gcloud configuration via a native QuickPick so the user
+  // doesn't have to spot the prompt scrolling past in the terminal during
+  // `moorpost init`. If the user picks an existing config we hand its name
+  // and project to bootstrap as flags, fully bypassing the terminal picker.
+  // If they pick "add new" — or we can't reach gcloud at all — we fall back
+  // to the in-terminal flow (which still shows a banner).
+  const gcloudPick = await pickGCloudConfig();
+  if (gcloudPick === undefined) return; // user dismissed
+
   const args = ['bootstrap', '--yes'];
   if (provisionChoice.provision) args.push('--provision');
-  runInTerminal(args, target.uri.fsPath);
+  if (gcloudPick !== 'fallback-to-terminal') {
+    args.push(`--gcp-config=${gcloudPick.name}`);
+    args.push(`--gcp-project=${gcloudPick.project}`);
+  }
+  const term = runInTerminal(args, target.uri.fsPath);
+  // Tell the status bar that bootstrap is in flight. While this terminal
+  // is alive, status-bar clicks focus this terminal instead of routing
+  // through toggleSide (which would fire signIn/provision/handoff on top
+  // of the still-running bootstrap as its intermediate states tick by).
+  setBootstrapTerminal(term);
+}
+
+/**
+ * Native VSCode picker for the gcloud configuration moorpost should use.
+ *
+ * Returns:
+ *   - a GCloudConfig: user picked an existing config (skip terminal picker)
+ *   - "fallback-to-terminal": user wants to add a new account, OR no
+ *     configs were found (gcloud not installed / never logged in) — let
+ *     `moorpost init` handle the OAuth flow in the terminal
+ *   - undefined: user dismissed the picker (caller should abort the action)
+ */
+async function pickGCloudConfig(): Promise<GCloudConfig | 'fallback-to-terminal' | undefined> {
+  const configs = await listGCloudConfigs();
+  if (configs.length === 0) {
+    // No configs (or gcloud missing). Fall through to the terminal so init's
+    // own picker can run `gcloud auth login` and walk the user through.
+    return 'fallback-to-terminal';
+  }
+
+  type Item = vscode.QuickPickItem & { kind?: 'config' | 'new'; config?: GCloudConfig };
+  const items: Item[] = configs.map((c) => ({
+    label: c.name,
+    description: c.is_active ? '(active)' : undefined,
+    detail: `account: ${c.account || '(none)'}   project: ${c.project || '(unset)'}`,
+    kind: 'config',
+    config: c,
+  }));
+  items.push({
+    label: '$(add) Add a new gcloud account',
+    detail: 'Opens a browser OAuth flow in the terminal — needed only the first time.',
+    kind: 'new',
+  });
+
+  const choice = await vscode.window.showQuickPick(items, {
+    title: 'Pick a gcloud configuration for Moorpost',
+    placeHolder: 'Moorpost will pin this configuration in .moorpost/config.yaml',
+    ignoreFocusOut: true,
+  });
+  if (!choice) return undefined;
+  if (choice.kind === 'new' || !choice.config) return 'fallback-to-terminal';
+
+  // A configuration without a project set would force `moorpost init` to
+  // re-trigger its own picker (it treats empty project as "ask the user").
+  // Surface that here instead of silently falling back, since the user
+  // *just* picked this config thinking it was set up.
+  if (!choice.config.project) {
+    void vscode.window.showWarningMessage(
+      `Configuration "${choice.config.name}" has no GCP project set. ` +
+        `Run \`gcloud --configuration=${choice.config.name} config set project YOUR_PROJECT\` first, then retry bootstrap.`,
+    );
+    return undefined;
+  }
+  return choice.config;
 }
 
 /**

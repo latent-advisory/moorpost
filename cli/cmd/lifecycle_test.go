@@ -106,7 +106,7 @@ func makeLifecycleContext(t *testing.T, fp *fakeProvider, withProject bool) (*Co
 	statePath := filepath.Join(dir, "state.json")
 
 	cfg := config.Default()
-	cfg.ProjectSlug = "argus"
+	cfg.ProjectSlug = "webapp"
 	cfg.Provider.Type = "gcp"
 	cfg.Provider.Raw = map[string]any{
 		"gcp": map[string]any{
@@ -120,10 +120,10 @@ func makeLifecycleContext(t *testing.T, fp *fakeProvider, withProject bool) (*Co
 	st := state.New()
 	if withProject {
 		st.SetProject(dir, state.ProjectState{
-			Slug: "argus", VMID: "argus-vm", VMZone: "us-central1-a",
+			Slug: "webapp", VMID: "webapp-vm", VMZone: "us-central1-a",
 			ActiveSide: state.SideLocal,
 		})
-		st.VMs["argus-vm"] = state.VMRecord{Provider: "fake", StateCache: "stopped"}
+		st.VMs["webapp-vm"] = state.VMRecord{Provider: "fake", StateCache: "stopped"}
 	}
 	if err := st.Save(statePath); err != nil {
 		t.Fatalf("Save state: %v", err)
@@ -163,7 +163,7 @@ func TestRunProvisionHappyPath(t *testing.T) {
 		t.Fatalf("expected 1 Provision call, got %d", len(fp.provisionCalls))
 	}
 	spec := fp.provisionCalls[0]
-	if spec.Name != "argus-vm" {
+	if spec.Name != "webapp-vm" {
 		t.Errorf("vm name = %q", spec.Name)
 	}
 	if spec.MachineType != "e2-standard-2" {
@@ -184,10 +184,10 @@ func TestRunProvisionHappyPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	ps, ok := st.GetProject(dir)
-	if !ok || ps.VMID != "argus-vm" {
+	if !ok || ps.VMID != "webapp-vm" {
 		t.Errorf("project state not updated: ok=%v ps=%+v", ok, ps)
 	}
-	rec := st.VMs["argus-vm"]
+	rec := st.VMs["webapp-vm"]
 	if rec.StateCache != "stopped" {
 		t.Errorf("VM state cache = %q, want stopped", rec.StateCache)
 	}
@@ -207,8 +207,8 @@ func TestRunProvisionWithStartFlag(t *testing.T) {
 		t.Error("--start should set StartImmediately=true")
 	}
 	st, _ := state.Open(c.StatePath)
-	if st.VMs["argus-vm"].StateCache != "running" {
-		t.Errorf("VM state cache = %q, want running", st.VMs["argus-vm"].StateCache)
+	if st.VMs["webapp-vm"].StateCache != "running" {
+		t.Errorf("VM state cache = %q, want running", st.VMs["webapp-vm"].StateCache)
 	}
 }
 
@@ -245,15 +245,15 @@ func TestRunUpHappyPath(t *testing.T) {
 	if err := RunUp(context.Background(), &out, c, UpOptions{}); err != nil {
 		t.Fatalf("RunUp: %v", err)
 	}
-	if len(fp.startCalls) != 1 || fp.startCalls[0] != "argus-vm" {
+	if len(fp.startCalls) != 1 || fp.startCalls[0] != "webapp-vm" {
 		t.Errorf("Start calls = %v", fp.startCalls)
 	}
 	st, _ := state.Open(c.StatePath)
-	if st.VMs["argus-vm"].StateCache != "running" {
+	if st.VMs["webapp-vm"].StateCache != "running" {
 		t.Error("state cache should be running")
 	}
-	if st.VMs["argus-vm"].ExternalIP != "35.1.2.3" {
-		t.Errorf("ExternalIP = %q, want 35.1.2.3", st.VMs["argus-vm"].ExternalIP)
+	if st.VMs["webapp-vm"].ExternalIP != "35.1.2.3" {
+		t.Errorf("ExternalIP = %q, want 35.1.2.3", st.VMs["webapp-vm"].ExternalIP)
 	}
 }
 
@@ -279,7 +279,7 @@ func TestRunDownHappyPath(t *testing.T) {
 		t.Errorf("Stop calls = %v", fp.stopCalls)
 	}
 	st, _ := state.Open(c.StatePath)
-	if st.VMs["argus-vm"].StateCache != "stopped" {
+	if st.VMs["webapp-vm"].StateCache != "stopped" {
 		t.Error("state cache should be stopped")
 	}
 }
@@ -300,7 +300,7 @@ func TestRunDestroyWithSkipPrompt(t *testing.T) {
 	if _, ok := st.GetProject(dir); ok {
 		t.Error("project should be removed from state")
 	}
-	if _, ok := st.VMs["argus-vm"]; ok {
+	if _, ok := st.VMs["webapp-vm"]; ok {
 		t.Error("VM record should be removed from state")
 	}
 }
@@ -345,7 +345,7 @@ func TestPlanAttach(t *testing.T) {
 		t.Errorf("SSHBin = %q", plan.SSHBin)
 	}
 	args := plan.Args
-	want := []string{"-t", "landy@35.1.2.3", "tmux", "attach-session", "-t", "argus"}
+	want := []string{"-t", "landy@35.1.2.3", "tmux", "attach-session", "-t", "webapp"}
 	for _, w := range want {
 		if !sliceContains(args, w) {
 			t.Errorf("args missing %q: %v", w, args)
