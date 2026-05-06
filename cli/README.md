@@ -9,7 +9,7 @@ cli/
 ├── main.go            # entrypoint
 ├── cmd/               # cobra commands (root + subcommands)
 └── internal/
-    ├── provider/      # cloud-provider abstraction (gcp, hetzner, ...)
+    ├── provider/      # cloud-provider abstraction (gcp, ...)
     ├── agent/         # AI-coding-agent abstraction (claude-code, ...)
     ├── sync/          # file-sync engine abstraction (mutagen, rsync, ...)
     ├── session/       # bundles provider+agent+sync per project

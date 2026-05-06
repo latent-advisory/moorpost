@@ -39,6 +39,10 @@ The existing options force a tradeoff:
 
 **Moorpost is the BYO-cloud, Claude-aware, one-command option.** The lane Anthropic itself is leaving open: their roadmap is Anthropic-managed execution, not BYO-VM.
 
+### Relationship to the official Claude Code VSCode extension
+
+[Anthropic's Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) gives you a local Claude session inside VSCode. Moorpost doesn't replace it — Moorpost adds the **handoff layer** so the same conversation can move between your laptop and a remote VM. If you have the Anthropic extension installed, the Moorpost extension auto-detects it and routes its panel through the local↔remote swap on every handoff (configurable via `moorpost.handoffSurface`). If you don't, Moorpost spawns its own integrated terminal running `claude` — same UX, terminal-based.
+
 ## Install
 
 You'll need macOS or Linux, a cloud provider account (GCP for v1.0), and a Claude Code subscription (or `ANTHROPIC_API_KEY`).
@@ -116,7 +120,7 @@ Realistic monthly cost on GCP `us-central1` (`e2-standard-2`):
 | 8 hrs/wk remote (typical handoff cadence) | **~$13**              |
 | Always-on (`--persistent` mode)           | **~$54**              |
 
-Default is local-first. Opt into always-on with `moorpost up --persistent`. Hetzner provider in v1.1 brings always-on to ~$8/mo.
+Default is local-first. Opt into always-on with `moorpost up --persistent`.
 
 `moorpost cost` shows the current month-to-date estimate. Set a hard cap in `.moorpost/config.yaml`:
 
@@ -138,9 +142,8 @@ Moorpost refuses to start the VM if the cap would be exceeded.
 - Sync model: continuous bidirectional mutagen for project files; one-shot rsync for agent session state at handoff/return boundaries
 - Three-interface extensibility (`Provider` / `Agent` / `Sync`)
 
-### v1.1 — broader local clients + cheaper always-on
+### v1.1 — broader local clients + better cost visibility
 
-- **Hetzner Cloud provider** (~$8/mo always-on baseline; ~85% cheaper than GCP for the same machine class)
 - **Real Cloud Billing API integration** behind `--actual` (replacing the v1.0 list-price estimator)
 - **VSCode marketplace listing**
 - **Windows local client** (CLI only initially)

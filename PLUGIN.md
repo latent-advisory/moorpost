@@ -57,7 +57,7 @@ Anthropic's own engineers run Claude Code on Coder.com (per Coder's "Building fo
 
 ### v1 non-goals
 
-- Multi-cloud (AWS, Azure) — defer to v2. Exception: **Hetzner** is a v1.1 priority because it's ~85% cheaper than GCP and the #1 cost ask we expect.
+- Multi-cloud (AWS, Azure, etc.) — defer to v2.
 - Multi-user / team workspaces — defer to v2.
 - Web UI / phone control — Anthropic ships Remote Control; don't compete on that surface.
 - AI-tool-agnostic abstraction (Cursor, Codex, Aider) — earn the right to expand by being the best Claude Code tool first.
@@ -199,7 +199,6 @@ For Moorpost's workload, six core requirements push hard toward VMs:
 | Bidirectional sync incl. non-git files (`.docx`)     | direct mutagen on FS | bind-mount fragility on Linux |
 | Stop-when-idle: disk-only $4-10/mo                   | yes      | most container hosts pay-while-running |
 | Run dev servers, browsers, DBs without port chains   | native   | port-forward through container + host |
-| Hetzner $8/mo path                                   | yes      | no equivalent host model |
 | Single-tenant (no isolation needed)                  | n/a      | isolation buys nothing here |
 
 Container isolation is genuinely valuable in **multi-tenant** systems (Anthropic Cloud Sandbox, Coder enterprise). Moorpost is single-tenant by design — the user owns the VM, and the agent already has access to everything that matters (project files, OAuth token, SSH config). A container wall doesn't stop a buggy agent from leaking those.
@@ -261,7 +260,7 @@ Three distinct things travel between local and remote, with different rules:
 
 ### 6.6 Extension points (so this isn't a Claude-and-GCP-only product forever)
 
-v1 ships with **one implementation behind each of three Go interfaces**, with the CLI talking only to interfaces. Adding Hetzner (v1.1), AWS/Azure (v2), or another agent (Cursor, Aider, Codex — v2+) is then a new file, not a refactor. The interfaces are intentionally small — minimal surface area is what makes them easy to implement.
+v1 ships with **one implementation behind each of three Go interfaces**, with the CLI talking only to interfaces. Adding AWS/Azure (v2) or another agent (Cursor, Aider, Codex — v2+) is then a new file, not a refactor. The interfaces are intentionally small — minimal surface area is what makes them easy to implement.
 
 **`Provider`** — abstracts cloud-provider concerns (VM lifecycle, networking, billing).
 
@@ -279,7 +278,7 @@ type Provider interface {
 }
 ```
 
-What each provider owns: provisioning APIs, IAM/credential model, cost APIs, networking primitives, machine-type catalog. v1 has `provider/gcp/`. v1.1 adds `provider/hetzner/`. v2 adds `provider/aws/`, `provider/azure/`.
+What each provider owns: provisioning APIs, IAM/credential model, cost APIs, networking primitives, machine-type catalog. v1 has `provider/gcp/`. v2 adds `provider/aws/`, `provider/azure/`.
 
 **`Agent`** — abstracts which AI coding tool is being remoted.
 
@@ -330,7 +329,7 @@ CLI commands construct a `Session` from `.moorpost/config.yaml` and call methods
 
 ```go
 provider.Register("gcp", gcp.New)
-provider.Register("hetzner", hetzner.New)  // v1.1
+provider.Register("aws", aws.New)         // future
 agent.Register("claude-code", claudecode.New)
 agent.Register("cursor-cli", cursorcli.New) // future
 sync.Register("mutagen", mutagen.New)
@@ -430,7 +429,7 @@ moorpost/
 │   │   ├── provider/          # cloud-provider abstraction
 │   │   │   ├── provider.go    # Provider interface + registry
 │   │   │   └── gcp/           # v1 implementation
-│   │   │   # hetzner/ added in v1.1; aws/, azure/ in v2
+│   │   │   # aws/, azure/ added in v2
 │   │   ├── agent/             # AI-agent abstraction
 │   │   │   ├── agent.go       # Agent interface + registry
 │   │   │   └── claudecode/    # v1 implementation
@@ -470,7 +469,7 @@ project_slug: webapp                # used for tmux session name and ~/moorpost/
 
 # --- Provider (cloud) ---------------------------------------------------------
 provider:
-  type: gcp                          # gcp | hetzner (v1.1) | aws (v2) | azure (v2)
+  type: gcp                          # gcp | aws (v2) | azure (v2)
   gcp:                               # only one provider section is read, by `type`
     project: your-gcp-project
     region: us-central1
@@ -480,10 +479,6 @@ provider:
     disk_type: pd-standard
     static_ip: true
     network_tags: [moorpost]
-  # hetzner:                         # v1.1
-  #   location: nbg1
-  #   server_type: ccx23
-  #   ssh_key_id: 12345
 
 # --- Agent (AI tool) ----------------------------------------------------------
 agent:
@@ -561,7 +556,7 @@ Per-machine. Not synced. Records which projects are configured, which side is cu
 Goal: someone (you) can run `moorpost init && moorpost auth && moorpost provision`, work on Claude locally, then `moorpost handoff` to a tmux'd Claude session on a fresh GCP VM with the agent already authenticated and mutagen sync running. `moorpost return` brings the work back. No VSCode extension yet.
 
 - [ ] CLI scaffolding (Cobra), state file, project config schema
-- [ ] **Define `Provider`, `Agent`, `Sync` interfaces** (per §6.6) and ship one impl each: `provider/gcp`, `agent/claudecode`, `sync/mutagen`. **CLI commands consume only the interfaces**, never the concrete impls. This is the v1 hinge that makes Hetzner / Cursor / rsync drop-in additions later. Cost: ~half a day of design time.
+- [ ] **Define `Provider`, `Agent`, `Sync` interfaces** (per §6.6) and ship one impl each: `provider/gcp`, `agent/claudecode`, `sync/mutagen`. **CLI commands consume only the interfaces**, never the concrete impls. This is the v1 hinge that makes new clouds / agents / sync engines drop-in additions later. Cost: ~half a day of design time.
 - [ ] `moorpost init`: first-run command in a project directory; writes `.moorpost/config.yaml`, validates the configured provider, prompts for missing settings
 - [ ] `moorpost auth`: wraps `claude setup-token` locally; stashes token in macOS Keychain / Linux Secret Service
 - [ ] `moorpost doctor`: diagnostics — checks gcloud auth, mutagen install, SSH config, claude CLI, Keychain access, GCP API enablement; returns a checklist with remediation hints
@@ -624,10 +619,10 @@ The handoff design is **manual-primary, smart-prompts-as-safety-net**. The user 
 - [ ] Versioning: semver, signed releases, auto-update check (`moorpost update`)
 - [ ] Public launch: HN, Twitter, Anthropic Discord, /r/ClaudeAI
 
-### v1.1 — Hetzner provider + terminal-first polish (target: +2 weeks)
+### v1.1 — terminal-first polish + cost visibility (target: +2 weeks)
 
-- [ ] Hetzner Cloud provider (CX/CCX line). At ~$8/mo for a CX32, this is the price-sensitive default for indie devs.
 - [ ] First-class terminal/CLI ergonomics: shell completions (bash/zsh/fish), `moorpost shell` for raw SSH, `--json` flag everywhere
+- [ ] Real Cloud Billing API integration behind `--actual` (replacing the v1.0 list-price estimator)
 - [ ] Windows local client (CLI only initially)
 
 ### v2 — Multi-cloud, team, opt-in containers

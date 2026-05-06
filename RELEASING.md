@@ -152,7 +152,7 @@ git checkout main && git merge --no-ff hotfix/v1.0.1
 Per the implementation loop's scoping decisions:
 
 - **Real Cloud Billing API** integration (deferred to v1.1 as `--actual` flag).
-- **Hetzner provider** (out of scope; v1 is GCP-only).
+- **Additional cloud providers** (out of scope; v1 is GCP-only — AWS / Azure arrive in v2).
 - **Native power-monitor sidecar** for the extension (extension-side detection works).
 - **Multi-machine fleet mode** (per PLUGIN.md §10 #11).
 - **Telemetry sender** (opt-in gate exists since iter 27, but no actual data path).
