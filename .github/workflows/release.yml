@@ -25,6 +25,11 @@ jobs:
           cache: true
           cache-dependency-path: cli/go.sum
 
+      # Linux keychain backend (libsecret) — required by claude-code agent
+      # init via keychain.New()'s PATH probe. See test.yml for context.
+      - name: Install libsecret-tools
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools
+
       - name: Test
         working-directory: cli
         run: go test -race ./...

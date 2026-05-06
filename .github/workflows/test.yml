@@ -27,6 +27,17 @@ jobs:
           cache: true
           cache-dependency-path: cli/go.sum
 
+      # Linux keychain backend (libsecret) — the claude-code agent's
+      # keychain.New() probes for `secret-tool` on PATH. Without this,
+      # any test that touches loadProjectContext (e.g.
+      # TestLoadProjectContextWalksUp) fails with
+      # "keychain: native backend unavailable: secret-tool not found".
+      # Production Linux installs of moorpost have this package; CI
+      # should mirror that environment.
+      - name: Install libsecret-tools (Linux only)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-tools
+
       - name: Vet
         working-directory: cli
         run: go vet ./...
