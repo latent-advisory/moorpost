@@ -170,19 +170,15 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
     const remoteCount = s.remote_sids?.length ?? 0;
     const legacyRemote = remoteCount === 0 && s.active_side === 'remote';
     let label: string;
-    let iconName: string;
     let effectiveSide: 'local' | 'remote';
     if (remoteCount > 0) {
       label = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
-      iconName = 'cloud';
       effectiveSide = 'remote';
     } else if (legacyRemote) {
       label = 'remote';
-      iconName = 'cloud';
       effectiveSide = 'remote';
     } else {
       label = 'local';
-      iconName = 'home';
       effectiveSide = 'local';
     }
     const ctx = `moorpost.activeSide.${effectiveSide}`;
@@ -191,7 +187,7 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
       title: 'Switch local ↔ remote',
     };
     items.push(
-      new MoorpostTreeItem('Active side', label, new vscode.ThemeIcon(iconName), toggle, ctx),
+      new MoorpostTreeItem('Active side', label, new vscode.ThemeIcon('cloud'), toggle, ctx),
     );
   }
   if (s.vm_id) {

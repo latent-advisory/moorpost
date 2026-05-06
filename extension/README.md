@@ -24,7 +24,7 @@ The first time you open a project that hasn't been initialized, the **Moorpost**
 
 1. **Detects missing prereqs** (`gcloud`, `mutagen`, `tmux`, `ripgrep`, `rsync`, `node`, `claude`) and offers to `brew`/`apt` install them.
 2. **Signs you into Claude** — opens a browser for the OAuth flow, caches the token in your OS keychain.
-3. **Picks a workspace folder** and writes `.moorpost/config.yaml` with sensible GCP defaults.
+3. **Picks a workspace folder, gcloud configuration, and machine type**, then writes `.moorpost/config.yaml`. The machine-type picker lists each option with its hourly rate and a rough monthly estimate at light use (~88 h/mo); `e2-standard-2` is starred as the recommended default.
 4. **(Optional) provisions the VM** — creates a stopped GCE instance and runs the bootstrap script that installs Node and Claude Code on it.
 
 After that, your daily loop is two commands:
@@ -50,13 +50,15 @@ Cooldown of 15 min between prompts. Set either threshold to `0` to disable.
 
 ### Status bar (bottom right)
 
-A one-line summary, refreshed every 10s (configurable via `moorpost.statusBarRefreshSeconds`):
+A one-line summary, refreshed every 10s (configurable via `moorpost.statusBarRefreshSeconds`). The side label reflects per-session routing:
 
 ```
-🟢 Local · VM ready (stopped) · this month: $0.42
+☁ local · stopped · $0.42                  ← all sessions on this laptop
+☁ 1 on remote · running · $0.42            ← one session routed to the VM
+☁ 3 on remote · running · $1.08            ← multiple sessions on the VM
 ```
 
-Click it for the full status pane.
+Click it to open a quick-pick that routes to the next-needed step (bootstrap → sign-in → provision when setup is incomplete) or, once configured, lets you pick **Handoff a session to remote**, **Return a session to local** (when any session is on remote), or **Show status details**.
 
 ### Project tree (activity bar)
 
@@ -66,7 +68,7 @@ A persistent panel showing every piece of state at a glance:
 |-----|---------------|-------|
 | Project | `my-app` | Slug from `.moorpost/config.yaml` |
 | Provider | `gcp` | The configured cloud |
-| Active side | `local` / `remote` | Which side is currently running Claude |
+| Active side | `local` / `1 on remote` / `N on remote` | Per-session: counts how many sessions are routed to the VM. Click to open the Handoff/Return/Status quick-pick. |
 | VM | `my-app-vm (running)` | Only when provisioned |
 | Sync engine | `mutagen` | |
 | Cost (MTD) | `$0.42` | Month-to-date estimate, click for breakdown |
@@ -98,7 +100,7 @@ All commands live under the **Moorpost** category in the command palette (`⌘�
 | Provision VM | Creates the GCE VM (left stopped) |
 | Handoff to remote | The handoff command |
 | Return to local | The return command |
-| Switch local ↔ remote | Same as handoff or return, depending on current side |
+| Switch local ↔ remote | Opens the Handoff/Return/Status quick-pick (also bound to the status-bar click) |
 | Attach to remote tmux | SSH + `tmux attach` to the live Claude session |
 | Show status | Full status pane (active side, VM, sync, cost) |
 | Show sync conflicts | Lists mutagen conflicts with resolution actions |

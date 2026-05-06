@@ -57,7 +57,7 @@ You only need to do this once per machine, not per project.
 cd /path/to/your/project   # e.g., your existing repo
 moorpost init             # auto-detects GCP project from gcloud config
 # Or specify explicitly:
-# moorpost init --gcp-project=YOUR_GCP_PROJECT --slug=myproject
+# moorpost init --gcp-project=YOUR_GCP_PROJECT --slug=myproject --machine-type=e2-standard-2
 ```
 
 Inspect/edit `.moorpost/config.yaml` if needed. Defaults: `e2-standard-2`, `100GB pd-standard`, `us-central1-a`, local-first mode. Cost: ~$0.067/hr running, $4/mo disk when stopped.

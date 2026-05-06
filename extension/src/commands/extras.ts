@@ -30,15 +30,17 @@ export async function editConfig(): Promise<void> {
 }
 
 /**
- * Single-action toggle that routes to the next-needed step in the setup
- * lifecycle:
+ * Status-bar click handler. For the setup lifecycle (no config / no auth /
+ * no VM) it routes directly to the next-needed step. Once configured and
+ * provisioned, it shows a quick-pick offering handoff AND return so the
+ * user can move any session in any direction at any time — required for
+ * per-session routing where a project may have BOTH local and remote
+ * sessions simultaneously.
+ *
  *   no config              → bootstrap
  *   no auth credential     → sign in
  *   configured but no VM   → provision
- *   configured + VM, local → handoff
- *   configured + VM, remote → return
- *
- * Wired to the status bar click and exposed as a palette command.
+ *   configured + VM        → quick-pick { Handoff, Return (if any remote), Status }
  */
 export async function toggleSide(): Promise<void> {
   const cwd = workspaceRoot();
@@ -46,10 +48,6 @@ export async function toggleSide(): Promise<void> {
     void vscode.window.showWarningMessage('Open a workspace folder first.');
     return;
   }
-  // If a bootstrap is currently running in a terminal we launched, route
-  // the click there instead of routing through the partial-status logic
-  // below. Without this guard, a click during the auth/init/provision
-  // window would fire signIn or provision on top of the running bootstrap.
   const bootstrapTerm = getBootstrapTerminal();
   if (bootstrapTerm) {
     bootstrapTerm.show();
@@ -61,10 +59,6 @@ export async function toggleSide(): Promise<void> {
     return;
   }
   if (status.auth_cached === false) {
-    // Config exists but the keychain has no Claude credential — usually
-    // means a partial bootstrap (auth was skipped/cancelled). Drive
-    // straight to sign-in instead of letting them provision a VM they
-    // can't hand off to.
     await vscode.commands.executeCommand('moorpost.signIn');
     return;
   }
@@ -72,15 +66,51 @@ export async function toggleSide(): Promise<void> {
     await vscode.commands.executeCommand('moorpost.provision');
     return;
   }
-  // Per-session routing: if any session is on remote, "switch sides" means
-  // bring one back. Only when ALL sessions are local (and the legacy whole-
-  // project active_side isn't 'remote' either) does click propose handoff.
+
   const remoteCount = status.remote_sids?.length ?? 0;
   const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
-  if (remoteCount > 0 || legacyRemote) {
-    await vscode.commands.executeCommand('moorpost.return');
-  } else {
-    await vscode.commands.executeCommand('moorpost.handoff');
+  const hasRemote = remoteCount > 0 || legacyRemote;
+
+  type Action = 'handoff' | 'return' | 'status';
+  interface ActionItem extends vscode.QuickPickItem { action: Action }
+  const items: ActionItem[] = [
+    {
+      label: '$(arrow-up) Handoff a session to remote',
+      description: 'Move a local Claude Code session to the VM',
+      action: 'handoff',
+    },
+  ];
+  if (hasRemote) {
+    items.push({
+      label: '$(arrow-down) Return a session to local',
+      description:
+        remoteCount > 0
+          ? `${remoteCount} session(s) currently on remote`
+          : 'Bring the remote-routed session back to this machine',
+      action: 'return',
+    });
+  }
+  items.push({
+    label: '$(info) Show status details',
+    description: 'Open the Moorpost status report',
+    action: 'status',
+  });
+
+  const placeHolder = hasRemote
+    ? `Moorpost — ${remoteCount} on remote, VM ${status.vm_state ?? '?'}`
+    : `Moorpost — all sessions local, VM ${status.vm_state ?? '?'}`;
+  const picked = await vscode.window.showQuickPick(items, { placeHolder });
+  if (!picked) return;
+  switch (picked.action) {
+    case 'handoff':
+      await vscode.commands.executeCommand('moorpost.handoff');
+      break;
+    case 'return':
+      await vscode.commands.executeCommand('moorpost.return');
+      break;
+    case 'status':
+      await vscode.commands.executeCommand('moorpost.status');
+      break;
   }
 }
 

@@ -93,18 +93,21 @@ async function pickGCloudConfig(): Promise<GCloudConfig | 'fallback-to-terminal'
     return 'fallback-to-terminal';
   }
 
-  type Item = vscode.QuickPickItem & { kind?: 'config' | 'new'; config?: GCloudConfig };
-  const items: Item[] = configs.map((c) => ({
+  // Note: don't reuse the property name `kind` — VSCode's QuickPickItem already
+  // defines `kind?: QuickPickItemKind`, and an intersection with our string
+  // literals collapses to `undefined`. Use a distinct name.
+  type Item = vscode.QuickPickItem & { action: 'config' | 'new'; config?: GCloudConfig };
+  const items: Item[] = configs.map<Item>((c) => ({
     label: c.name,
     description: c.is_active ? '(active)' : undefined,
     detail: `account: ${c.account || '(none)'}   project: ${c.project || '(unset)'}`,
-    kind: 'config',
+    action: 'config',
     config: c,
   }));
   items.push({
     label: '$(add) Add a new gcloud account',
     detail: 'Opens a browser OAuth flow in the terminal — needed only the first time.',
-    kind: 'new',
+    action: 'new',
   });
 
   const choice = await vscode.window.showQuickPick(items, {
@@ -113,7 +116,7 @@ async function pickGCloudConfig(): Promise<GCloudConfig | 'fallback-to-terminal'
     ignoreFocusOut: true,
   });
   if (!choice) return undefined;
-  if (choice.kind === 'new' || !choice.config) return 'fallback-to-terminal';
+  if (choice.action === 'new' || !choice.config) return 'fallback-to-terminal';
 
   // A configuration without a project set would force `moorpost init` to
   // re-trigger its own picker (it treats empty project as "ask the user").
@@ -127,6 +130,54 @@ async function pickGCloudConfig(): Promise<GCloudConfig | 'fallback-to-terminal'
     return undefined;
   }
   return choice.config;
+}
+
+/**
+ * GCP machine type options offered during init. Rates mirror the gcp
+ * package's listPriceTable (us-central1, on-demand list price). Keep
+ * these in sync with cli/internal/provider/gcp/gcp.go's listPriceTable.
+ *
+ * The "light use" monthly estimate assumes ~4h/day of active remote
+ * routing × 22 working days = ~88 hours/month. Real usage with the
+ * local-first/handoff workflow varies wildly; the number is a rough
+ * order-of-magnitude anchor for the picker.
+ */
+interface MachineTypeOption {
+  type: string;
+  vCPU: string;
+  ramGB: number;
+  hourlyUSD: number;
+  notes?: string;
+}
+
+const MACHINE_TYPE_OPTIONS: MachineTypeOption[] = [
+  { type: 'e2-medium', vCPU: '1-2 (shared)', ramGB: 4, hourlyUSD: 0.0335, notes: 'cheapest viable; tight for big builds' },
+  { type: 'e2-standard-2', vCPU: '2', ramGB: 8, hourlyUSD: 0.067, notes: 'balanced default' },
+  { type: 'e2-standard-4', vCPU: '4', ramGB: 16, hourlyUSD: 0.134, notes: 'heavier builds / monorepos' },
+  { type: 'e2-standard-8', vCPU: '8', ramGB: 32, hourlyUSD: 0.268, notes: 'overkill for most solo work' },
+];
+
+const RECOMMENDED_MACHINE_TYPE = 'e2-standard-2';
+const HOURS_PER_MONTH_LIGHT_USE = 88;
+
+async function pickMachineType(): Promise<string | undefined> {
+  interface Item extends vscode.QuickPickItem { type: string }
+  const items: Item[] = MACHINE_TYPE_OPTIONS.map((opt) => {
+    const monthly = opt.hourlyUSD * HOURS_PER_MONTH_LIGHT_USE;
+    const recommended = opt.type === RECOMMENDED_MACHINE_TYPE;
+    return {
+      label: `${recommended ? '$(star-full) ' : ''}${opt.type}`,
+      description: `${opt.vCPU} vCPU · ${opt.ramGB} GB RAM · $${opt.hourlyUSD.toFixed(4)}/hr`,
+      detail: `~$${monthly.toFixed(2)}/mo at ${HOURS_PER_MONTH_LIGHT_USE}h light use${opt.notes ? ` — ${opt.notes}` : ''}`,
+      type: opt.type,
+    };
+  });
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Pick a GCP machine type for the remote VM (★ = recommended)',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  return picked?.type;
 }
 
 /**
@@ -152,12 +203,19 @@ export async function initProject(): Promise<void> {
     if (!target) return;
   }
 
+  const machineType = await pickMachineType();
+  if (!machineType) return;
+
+  const opt = MACHINE_TYPE_OPTIONS.find((o) => o.type === machineType);
+  const costLine = opt
+    ? `\n\nMachine type: ${opt.type} (${opt.vCPU} vCPU, ${opt.ramGB} GB RAM, $${opt.hourlyUSD.toFixed(4)}/hr)`
+    : '';
   const confirm = await vscode.window.showInformationMessage(
-    `Initialize Moorpost in "${target.name}"?\n\nThis writes .moorpost/config.yaml with sensible defaults. Sync will mirror this folder (minus standard excludes) to the remote VM.`,
+    `Initialize Moorpost in "${target.name}"?\n\nThis writes .moorpost/config.yaml. Sync will mirror this folder (minus standard excludes) to the remote VM.${costLine}`,
     { modal: true },
     'Initialize',
   );
   if (confirm !== 'Initialize') return;
 
-  runInTerminal(['init'], target.uri.fsPath);
+  runInTerminal(['init', '--machine-type', machineType], target.uri.fsPath);
 }

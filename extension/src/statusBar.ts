@@ -101,17 +101,14 @@ async function refresh(): Promise<void> {
   const remoteCount = status.remote_sids?.length ?? 0;
   const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
   let sideLabel: string;
-  let icon: string;
   if (remoteCount > 0) {
     sideLabel = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
-    icon = '$(cloud)';
   } else if (legacyRemote) {
     sideLabel = 'remote';
-    icon = '$(cloud)';
   } else {
     sideLabel = 'local';
-    icon = '$(home)';
   }
+  const icon = '$(cloud)';
   const vmState = status.vm_state ? ` · ${status.vm_state}` : '';
   // Show MTD cost whenever the field is present in the JSON, even when
   // it's $0.00 — the user gets visible confirmation that cost tracking

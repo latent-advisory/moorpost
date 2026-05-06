@@ -133,7 +133,7 @@ Moorpost refuses to start the VM if the cap would be exceeded.
 ### v1.0 (release candidate)
 
 - CLI: 19 commands across 19 internal packages, 75% test coverage
-- VSCode extension: tree view, smart handoff prompts (focus-loss / idle / OS-sleep), conflict surface, right-click context menu, status bar
+- VSCode extension: tree view with per-session routing, smart handoff prompts (focus-loss / idle / OS-sleep), conflict surface, right-click context menu, status bar with Handoff/Return/Status quick-pick, machine-type picker on init
 - Cost protection: pre-flight monthly cap, list-price estimator, VM-side auto-stop on idle in `--persistent` mode
 - Sync model: continuous bidirectional mutagen for project files; one-shot rsync for agent session state at handoff/return boundaries
 - Three-interface extensibility (`Provider` / `Agent` / `Sync`)

@@ -9,7 +9,7 @@ flow, skipping work that's already done.
 | --- | --- | --- |
 | 1. Setup | Detects gcloud, mutagen, tmux, ripgrep, rsync, node, claude on your PATH; installs missing via brew/apt | ~5s if all installed, ~30s per missing tool |
 | 2. Auth | Opens a browser for the Claude OAuth flow; caches the token in your OS keychain | ~30s (interactive) |
-| 3. Init | Asks which workspace folder to manage; writes `.moorpost/config.yaml` with sensible defaults | <1s |
+| 3. Init | Asks which workspace folder, gcloud configuration, and machine type to use; writes `.moorpost/config.yaml`. The machine-type picker shows hourly rate + monthly estimate; `e2-standard-2` is the recommended default | <1s |
 | 4. Provision *(optional)* | Creates the GCE VM (left stopped to save cost). Polls SSH until `claude` is on PATH on the VM | ~3 min wall-clock |
 
 The wizard prompts you to opt in/out of step 4 — useful for cost-conscious
