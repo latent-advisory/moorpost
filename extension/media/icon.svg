@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <!-- B3: stacked — cloud and laptop touching, no explicit tether (the touch implies it) -->
+  <rect width="128" height="128" rx="22" fill="#0E1116"/>
+
+  <!-- Cloud, slightly larger and softer -->
+  <path d="M34 56
+           a18 18 0 0 1 18 -18
+           a20 20 0 0 1 18 9
+           a16 16 0 0 1 16 16
+           a12 12 0 0 1 -12 12
+           h-40
+           a14 14 0 0 1 0 -19 z"
+        fill="#7AA6CC"/>
+
+  <!-- Laptop directly below the cloud, almost touching — implies the link without drawing it -->
+  <rect x="34" y="80" width="60" height="22" rx="3" fill="#FFFFFF"/>
+  <!-- Screen window inside the laptop -->
+  <rect x="40" y="86" width="48" height="10" rx="1.5" fill="#0E1116"/>
+  <!-- Laptop base -->
+  <rect x="26" y="102" width="76" height="5" rx="2.5" fill="#FFFFFF"/>
+</svg>

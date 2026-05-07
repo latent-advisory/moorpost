@@ -23,6 +23,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as childProcess from 'child_process';
 import { logToChannel } from './output';
 
 const SPAWNS_LOG = path.join(os.homedir(), '.moorpost', 'log', 'spawns.jsonl');
@@ -229,6 +230,84 @@ export class SessionTracker {
     );
   }
 
+  /**
+   * Authoritative per-SID surface detection via `ps` parent inspection.
+   *
+   * For each live process matching `claude --resume <sid>` (local) OR
+   * `ssh ... claude --resume <sid>` (remote-routed), look at its parent
+   * process. A shell parent (bash/zsh/etc.) means the session is being
+   * driven by a terminal — Moorpost: Claude terminal or external shell.
+   * A non-shell parent (typically the VSCode plugin host node process)
+   * means the session is in a Claude Code panel.
+   *
+   * Returns:
+   *   'plugin'   — at least one match has a non-shell parent
+   *   'terminal' — all matches have shell parents
+   *   'unknown'  — ps failed, no live processes for this SID, or
+   *                indeterminate parents (will fall back to heuristic)
+   *
+   * Plugin wins if both surfaces have processes for the same SID — the
+   * caller (preflight popup) errs on the side of prompting.
+   */
+  async getSessionSurfaceForSid(
+    sid: string,
+  ): Promise<'plugin' | 'terminal' | 'unknown'> {
+    return new Promise((resolve) => {
+      const child = childProcess.execFile(
+        'ps',
+        ['-eo', 'pid=,ppid=,args='],
+        { maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) {
+            logToChannel(`getSessionSurfaceForSid(${sid}): ps failed: ${String(err)}`);
+            resolve('unknown');
+            return;
+          }
+          const rows = new Map<number, { ppid: number; args: string }>();
+          for (const raw of stdout.split('\n')) {
+            const line = raw.trimStart();
+            if (!line) continue;
+            const m = line.match(/^(\d+)\s+(\d+)\s+(.+)$/);
+            if (!m) continue;
+            rows.set(parseInt(m[1], 10), {
+              ppid: parseInt(m[2], 10),
+              args: m[3],
+            });
+          }
+          const sidRe = new RegExp(`--resume[ =]${escapeRe(sid)}\\b`);
+          const matches: number[] = [];
+          for (const [pid, row] of rows) {
+            if (!sidRe.test(row.args)) continue;
+            // Filter to actual claude/ssh processes (not unrelated commands
+            // that happen to mention the SID in an arg).
+            if (!/\b(claude|ssh)\b/.test(row.args)) continue;
+            matches.push(pid);
+          }
+          if (matches.length === 0) {
+            resolve('unknown');
+            return;
+          }
+          let sawPlugin = false;
+          let sawTerminal = false;
+          for (const pid of matches) {
+            const row = rows.get(pid);
+            if (!row) continue;
+            const parent = rows.get(row.ppid);
+            if (!parent) continue;
+            if (looksLikeShell(parent.args)) sawTerminal = true;
+            else sawPlugin = true;
+          }
+          if (sawPlugin) resolve('plugin');
+          else if (sawTerminal) resolve('terminal');
+          else resolve('unknown');
+        },
+      );
+      setTimeout(() => {
+        try { child.kill(); } catch { /* ignore */ }
+      }, 5000);
+    });
+  }
+
   private readRecentSpawns(maxAgeMs: number): SpawnRecord[] {
     const all = this.readAllSpawns();
     const cutoff = Date.now() - maxAgeMs;
@@ -255,4 +334,20 @@ export class SessionTracker {
       return [];
     }
   }
+}
+
+const SHELL_BINS = new Set([
+  'bash', '-bash', 'zsh', '-zsh', 'sh', 'fish', '-fish', 'dash', 'ksh',
+  'login',
+]);
+
+function looksLikeShell(args: string): boolean {
+  const first = args.trimStart().split(/\s+/)[0];
+  if (!first) return false;
+  const base = first.split('/').pop() ?? '';
+  return SHELL_BINS.has(base);
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

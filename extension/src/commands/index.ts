@@ -344,21 +344,58 @@ export function registerCommands(
     return sid.slice(0, 8) + '…';
   };
 
-  // Pre-CLI confirmation: sticky non-blocking notification.
+  // Heuristic: any Claude Code panel open in the workspace? Used as a
+  // fallback when the authoritative ps-based surface detection comes back
+  // 'unknown' (process gone, ps failed, etc).
+  const anyClaudeTabOpen = (): boolean => {
+    for (const group of vscode.window.tabGroups.all) {
+      for (const tab of group.tabs) {
+        const input = tab.input as { viewType?: string } | undefined;
+        if (input?.viewType === 'claudeVSCodePanel') return true;
+      }
+    }
+    return false;
+  };
+
+  // Pre-CLI confirmation for plugin panels. Skipped entirely for sessions
+  // running only in a terminal — terminal mode auto-replaces via
+  // openLocalClaude/openRemoteClaude (programmatic dispose() works
+  // reliably; tabGroups.close() on plugin panels does not).
   //
-  // VSCode notifications shown via showWarningMessage with action buttons
-  // do NOT auto-dismiss — they stay in the notification toaster until the
-  // user clicks one of the buttons. So the user can freely interact with
-  // editors (close the Claude Code panel) while the notification waits.
-  // Then they click "I closed it" to proceed, or "Cancel" to abort.
+  // Detection priority:
+  //   1. tracker.getSessionSurfaceForSid(sid) via `ps` parent inspection
+  //      — authoritative when the process exists.
+  //   2. tracker.getTabsForSid(sid) — high confidence when tracker has
+  //      mapped a tab, but heuristic and lossy post-reload.
+  //   3. Any Claude Code panel open at all — conservative fallback;
+  //      shows the prompt rather than risk silent reveal-in-place.
   //
-  // We use showWarningMessage (yellow icon) instead of Information so it's
-  // more visually prominent than a regular toast.
+  // The notification uses showWarningMessage with action buttons, which
+  // doesn't auto-dismiss — it stays in the toaster until the user clicks
+  // a button.
   const preflightClosePrompt = async (
     cwd: string,
     sid: string,
     destLabel: 'remote' | 'local',
   ): Promise<boolean> => {
+    const tracker = getSessionTracker();
+    if (tracker) {
+      const surface = await tracker.getSessionSurfaceForSid(sid);
+      if (surface === 'terminal') {
+        logToChannel(`preflightClosePrompt(${sid}): ps says terminal, skipping prompt`);
+        return true;
+      }
+      if (surface === 'unknown') {
+        // Authoritative detection failed — fall back to heuristics.
+        if (tracker.getTabsForSid(sid).length === 0 && !anyClaudeTabOpen()) {
+          logToChannel(`preflightClosePrompt(${sid}): ps unknown + no plugin panels, skipping prompt`);
+          return true;
+        }
+        logToChannel(`preflightClosePrompt(${sid}): ps unknown but plugin panels exist, prompting (conservative)`);
+      } else {
+        logToChannel(`preflightClosePrompt(${sid}): ps says plugin, prompting`);
+      }
+    }
     const preview = await sessionPreview(cwd, sid);
     const previewShort = preview.length > 60 ? preview.slice(0, 60) + '…' : preview;
     logToChannel(`preflightClosePrompt(${sid}): dest=${destLabel} preview="${previewShort}"`);
