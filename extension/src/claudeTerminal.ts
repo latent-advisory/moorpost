@@ -72,12 +72,46 @@ function sweepOrphanClaudeTerminals(): void {
  * remote Claude pane. If a remote terminal is already alive, focuses
  * it. If a local terminal is alive, disposes it first and creates the
  * remote one (active side has changed).
+ *
+ * `reuseTerminal`: an existing terminal to run the command in rather
+ * than creating a new one. Used for terminal-surface handoff to keep
+ * the session in the same terminal window — sends Ctrl+C to kill the
+ * current local claude process, then runs `moorpost attach` in place.
  */
-export function openRemoteClaude(cwd?: string): vscode.Terminal {
+/**
+ * Switch to (or open) the remote Claude terminal.
+ *
+ * `reuseTerminal`: a specific terminal identified by the caller as the one
+ * currently running the local claude session (found by matching shell PID
+ * from ps). When provided, we kill the local claude in-place (Ctrl+C) and
+ * run `moorpost attach` in the same window so the tab stays put.
+ *
+ * Without `reuseTerminal`:
+ *  - If we own a tracked local terminal, reuse it in-place.
+ *  - Otherwise create a new "Moorpost: Claude" terminal.
+ */
+export function openRemoteClaude(cwd?: string, reuseTerminal?: vscode.Terminal): vscode.Terminal {
   if (active && active.side === 'remote' && !active.terminal.exitStatus) {
     active.terminal.show(false);
     return active.terminal;
   }
+
+  // Prefer the caller-supplied terminal (identified safely by shell PID),
+  // then fall back to our own tracked local terminal.
+  const inPlace = (reuseTerminal && !reuseTerminal.exitStatus)
+    ? reuseTerminal
+    : (active && active.side === 'local' && !active.terminal.exitStatus)
+      ? active.terminal
+      : undefined;
+
+  if (inPlace) {
+    active = { terminal: inPlace, side: 'remote', cwd, closingDeliberately: false };
+    inPlace.sendText('\x03', false); // Ctrl+C — kill local claude
+    setTimeout(() => inPlace.sendText(`${cliBinary()} attach`, true), 300);
+    inPlace.show(false);
+    return inPlace;
+  }
+
   dispose();
   sweepOrphanClaudeTerminals();
   const terminal = vscode.window.createTerminal({
@@ -120,6 +154,27 @@ export function openLocalClaude(cwd: string, sessionId?: string): vscode.Termina
  *  cleanly without surfacing a false "disconnected" notification. */
 export function closeClaudeTerminalQuietly(): void {
   dispose();
+}
+
+/**
+ * Close the VSCode terminal whose shell process ID matches `shellPid`.
+ * Used for terminal-surface handoff/return to close the original
+ * (non-Moorpost-managed) terminal that was running `claude` before we
+ * open the new remote/local terminal.
+ */
+export async function closeTerminalByShellPid(shellPid: number): Promise<void> {
+  for (const t of vscode.window.terminals) {
+    if (t.exitStatus) continue;
+    try {
+      const pid = await t.processId;
+      if (pid === shellPid) {
+        t.dispose();
+        return;
+      }
+    } catch {
+      // processId unavailable for some terminal types
+    }
+  }
 }
 
 /**

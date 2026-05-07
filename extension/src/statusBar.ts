@@ -1,4 +1,4 @@
-// Status bar item — the project-state bar (active_side / vm_state / cost
+// Status bar item — the project-state bar (vm_state / cost
 // / remote-session count). Updates periodically via `moorpost status --json`.
 
 import * as vscode from 'vscode';
@@ -93,18 +93,12 @@ async function refresh(): Promise<void> {
     return;
   }
   // Configured and provisioned — show summary that reflects per-session
-  // routing. With per-session handoffs, `active_side` is the legacy
-  // whole-project flag; the per-session truth lives in remote_sids.
-  // Showing "local" while one session is actually running on the VM is
-  // misleading, so derive the label from remote_sids.length.
+  // routing. The per-session truth lives in remote_sids.length.
   item.backgroundColor = undefined;
   const remoteCount = status.remote_sids?.length ?? 0;
-  const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
   let sideLabel: string;
   if (remoteCount > 0) {
     sideLabel = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
-  } else if (legacyRemote) {
-    sideLabel = 'remote';
   } else {
     sideLabel = 'local';
   }
@@ -181,7 +175,6 @@ function renderTooltip(s: ReturnType<typeof renderTooltipShape>): string {
     `Sync engine:   ${s.sync}`,
     `Mode:          ${s.mode}`,
   ];
-  if (s.active_side) lines.push(`Active side:   ${s.active_side} (legacy)`);
   const remoteCount = s.remote_sids?.length ?? 0;
   if (remoteCount > 0) {
     lines.push(`Remote sessions: ${remoteCount}`);

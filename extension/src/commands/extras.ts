@@ -68,8 +68,7 @@ export async function toggleSide(): Promise<void> {
   }
 
   const remoteCount = status.remote_sids?.length ?? 0;
-  const legacyRemote = remoteCount === 0 && status.active_side === 'remote';
-  const hasRemote = remoteCount > 0 || legacyRemote;
+  const hasRemote = remoteCount > 0;
 
   type Action = 'handoff' | 'return' | 'status';
   interface ActionItem extends vscode.QuickPickItem { action: Action }

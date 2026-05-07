@@ -52,6 +52,16 @@ export class MoorpostTreeProvider
   }
 
   async getChildren(parent?: MoorpostTreeItem): Promise<MoorpostTreeItem[]> {
+    // Re-fetch remote sessions live when the node is expanded. VSCode
+    // caches expanded nodes and may call getChildren(oldItem) after a
+    // refresh — returning oldItem.children would show stale data.
+    if (parent?.contextValue === 'moorpost.remoteSessionsRoot') {
+      const cwd = workspaceRoot();
+      const status = cwd ? await getStatus(cwd) : null;
+      const remoteSids = status?.remote_sids ?? [];
+      const sessions = cwd ? await listLocalSessions(cwd) : [];
+      return buildRemoteSessionChildren(remoteSids, sessions);
+    }
     if (parent) return parent.children;
     const cwd = workspaceRoot();
     if (!cwd) {
@@ -93,10 +103,10 @@ export class MoorpostTreeProvider
  * could happen if the JSONL hasn't been synced back yet) still appear
  * with the SID as the only label.
  */
-function buildRemoteSessionsItem(
+function buildRemoteSessionChildren(
   remoteSids: string[],
   localSessions: SessionInfo[],
-): MoorpostTreeItem {
+): MoorpostTreeItem[] {
   const byId = new Map(localSessions.map((s) => [s.sessionId, s] as const));
   const children: MoorpostTreeItem[] = [];
   if (remoteSids.length > 1) {
@@ -128,6 +138,13 @@ function buildRemoteSessionsItem(
       ),
     );
   }
+  return children;
+}
+
+function buildRemoteSessionsItem(
+  remoteSids: string[],
+  localSessions: SessionInfo[],
+): MoorpostTreeItem {
   return new MoorpostTreeItem(
     'Remote sessions',
     String(remoteSids.length),
@@ -135,7 +152,7 @@ function buildRemoteSessionsItem(
     undefined,
     'moorpost.remoteSessionsRoot',
     vscode.TreeItemCollapsibleState.Expanded,
-    children,
+    buildRemoteSessionChildren(remoteSids, localSessions),
   );
 }
 
@@ -163,19 +180,12 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
     new MoorpostTreeItem('Sync engine', s.sync, new vscode.ThemeIcon('sync'), editConfig),
     new MoorpostTreeItem('Mode', s.mode, new vscode.ThemeIcon('gear'), editConfig),
   ];
-  if (s.active_side) {
-    // Per-session routing: prefer the count of remote sessions over the
-    // legacy whole-project active_side field. Showing "local" while one
-    // session is actually on the VM is misleading.
+  {
     const remoteCount = s.remote_sids?.length ?? 0;
-    const legacyRemote = remoteCount === 0 && s.active_side === 'remote';
     let label: string;
     let effectiveSide: 'local' | 'remote';
     if (remoteCount > 0) {
       label = remoteCount === 1 ? '1 on remote' : `${remoteCount} on remote`;
-      effectiveSide = 'remote';
-    } else if (legacyRemote) {
-      label = 'remote';
       effectiveSide = 'remote';
     } else {
       label = 'local';

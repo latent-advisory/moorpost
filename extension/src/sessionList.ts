@@ -40,34 +40,65 @@ export function sessionsDir(absCwd: string): string {
   return path.join(os.homedir(), '.claude', 'projects', encodeCwd(absCwd));
 }
 
-export async function listLocalSessions(absCwd: string): Promise<SessionInfo[]> {
-  const dir = sessionsDir(absCwd);
-  let entries: string[];
+/**
+ * Return all project directories under ~/.claude/projects/ that correspond
+ * to the given workspace root or any of its subdirectories.
+ *
+ * Claude stores each session under a key derived from the cwd at the time
+ * the session was started. A user may run `claude` from a subdirectory of
+ * the workspace (e.g. code/ifrs3_extractor) — those sessions land in a
+ * different projects/ folder and would be invisible to the picker if we
+ * only scanned the exact workspace-root directory. We scan all directories
+ * whose encoded name equals the encoded workspace root OR starts with
+ * "<encoded-root>-" (the `-` comes from the `/` separator being replaced).
+ */
+async function allProjectDirsForWorkspace(absCwd: string): Promise<string[]> {
+  const base = path.join(os.homedir(), '.claude', 'projects');
+  const encoded = encodeCwd(absCwd);
+  let allDirs: string[];
   try {
-    entries = await fs.promises.readdir(dir);
+    allDirs = await fs.promises.readdir(base);
   } catch {
     return [];
   }
+  return allDirs
+    .filter((d) => d === encoded || d.startsWith(encoded + '-'))
+    .map((d) => path.join(base, d));
+}
+
+export async function listLocalSessions(absCwd: string): Promise<SessionInfo[]> {
+  const dirs = await allProjectDirsForWorkspace(absCwd);
+  const seen = new Set<string>();
   const sessions: SessionInfo[] = [];
-  for (const entry of entries) {
-    if (!entry.endsWith('.jsonl')) continue;
-    const sessionId = entry.slice(0, -'.jsonl'.length);
-    if (!isUuid(sessionId)) continue;
-    const jsonlPath = path.join(dir, entry);
-    let stat: fs.Stats;
+  for (const dir of dirs) {
+    let entries: string[];
     try {
-      stat = await fs.promises.stat(jsonlPath);
+      entries = await fs.promises.readdir(dir);
     } catch {
       continue;
     }
-    const firstUserText = await extractFirstUserText(jsonlPath);
-    sessions.push({
-      sessionId,
-      mtimeMs: stat.mtimeMs,
-      sizeBytes: stat.size,
-      firstUserText,
-      jsonlPath,
-    });
+    for (const entry of entries) {
+      if (!entry.endsWith('.jsonl')) continue;
+      const sessionId = entry.slice(0, -'.jsonl'.length);
+      if (!isUuid(sessionId)) continue;
+      if (seen.has(sessionId)) continue;
+      seen.add(sessionId);
+      const jsonlPath = path.join(dir, entry);
+      let stat: fs.Stats;
+      try {
+        stat = await fs.promises.stat(jsonlPath);
+      } catch {
+        continue;
+      }
+      const firstUserText = await extractFirstUserText(jsonlPath);
+      sessions.push({
+        sessionId,
+        mtimeMs: stat.mtimeMs,
+        sizeBytes: stat.size,
+        firstUserText,
+        jsonlPath,
+      });
+    }
   }
   sessions.sort((a, b) => b.mtimeMs - a.mtimeMs);
   return sessions;

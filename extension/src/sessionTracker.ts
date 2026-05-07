@@ -249,6 +249,45 @@ export class SessionTracker {
    * Plugin wins if both surfaces have processes for the same SID — the
    * caller (preflight popup) errs on the side of prompting.
    */
+  /**
+   * If `claude --resume <sid>` is currently running locally, return the
+   * PID of its parent shell process (the VSCode terminal's shell). Used
+   * to close the original terminal before opening a new remote one.
+   * Returns undefined when the process can't be found via ps.
+   */
+  async getShellPidForSid(sid: string): Promise<number | undefined> {
+    return new Promise((resolve) => {
+      const child = childProcess.execFile(
+        'ps',
+        ['-eo', 'pid=,ppid=,args='],
+        { maxBuffer: 4 * 1024 * 1024 },
+        (err, stdout) => {
+          if (err) { resolve(undefined); return; }
+          const rows = new Map<number, { ppid: number; args: string }>();
+          for (const raw of stdout.split('\n')) {
+            const line = raw.trimStart();
+            if (!line) continue;
+            const m = line.match(/^(\d+)\s+(\d+)\s+(.+)$/);
+            if (!m) continue;
+            rows.set(parseInt(m[1], 10), { ppid: parseInt(m[2], 10), args: m[3] });
+          }
+          const sidRe = new RegExp(`--resume[ =]${escapeRe(sid)}\\b`);
+          for (const [pid, row] of rows) {
+            if (!sidRe.test(row.args)) continue;
+            if (!/\b(claude|ssh)\b/.test(row.args)) continue;
+            const parent = rows.get(row.ppid);
+            if (parent && looksLikeShell(parent.args)) {
+              resolve(row.ppid);
+              return;
+            }
+          }
+          resolve(undefined);
+        },
+      );
+      setTimeout(() => { try { child.kill(); } catch { /* ignore */ } }, 5000);
+    });
+  }
+
   async getSessionSurfaceForSid(
     sid: string,
   ): Promise<'plugin' | 'terminal' | 'unknown'> {
@@ -292,13 +331,24 @@ export class SessionTracker {
           for (const pid of matches) {
             const row = rows.get(pid);
             if (!row) continue;
+            // SSH process routing --resume to a remote VM = terminal.
+            // SSH wins unconditionally — if there's also an orphaned plugin
+            // process for the same SID (from a previous interrupted handoff),
+            // the SSH process is the authoritative surface.
+            if (/^ssh\b/.test(row.args.trimStart())) {
+              sawTerminal = true;
+              continue;
+            }
             const parent = rows.get(row.ppid);
             if (!parent) continue;
             if (looksLikeShell(parent.args)) sawTerminal = true;
             else sawPlugin = true;
           }
-          if (sawPlugin) resolve('plugin');
-          else if (sawTerminal) resolve('terminal');
+          // Terminal (especially SSH) takes priority over plugin — an orphaned
+          // plugin panel from a previous failed handoff should not override an
+          // active SSH-routed terminal session.
+          if (sawTerminal) resolve('terminal');
+          else if (sawPlugin) resolve('plugin');
           else resolve('unknown');
         },
       );

@@ -395,6 +395,12 @@ func (c *claudeCode) Resume(ctx context.Context, target agent.SSHTarget, ref age
 		env[CredentialEnvVar] = string(tok)
 	}
 	if err := tx.NewSession(ctx, ref.ProjectSlug, cmd, env); err != nil {
+		// Session already exists — HasSession may have raced or returned a
+		// stale result. The contract is "make sure claude is running there";
+		// if the session is already up, we're done.
+		if errors.Is(err, tmux.ErrSessionExists) {
+			return nil
+		}
 		return fmt.Errorf("claudecode.Resume: %w", err)
 	}
 	return nil

@@ -56,6 +56,50 @@ function pickHandoffSurface(): HandoffSurface {
 }
 
 /**
+ * Resolve which surface to use for a specific session SID.
+ *
+ * pickHandoffSurface() is project-wide: it returns 'plugin' whenever the
+ * plugin is installed/routed, even if the SID being moved is actually in
+ * a terminal. This function corrects that by checking the SID specifically:
+ *
+ *  1. Explicit `moorpost.handoffSurface` setting — user override.
+ *  2. ps parent inspection — shell parent = terminal, node parent = plugin.
+ *     Takes priority over the tab map to avoid stale tabs from previous
+ *     interrupted operations misleading the detection.
+ *  3. ps 'unknown' (no --resume match) → 'terminal'. No live plugin
+ *     process means no plugin panel to close or route.
+ *  4. No tracker → project-wide pickHandoffSurface() fallback.
+ */
+async function resolveHandoffSurfaceForSid(sid: string): Promise<HandoffSurface> {
+  const explicit = vscode.workspace
+    .getConfiguration('moorpost')
+    .get<string>('handoffSurface');
+  if (explicit === 'terminal' || explicit === 'plugin') return explicit;
+
+  const tracker = getSessionTracker();
+  if (!tracker) {
+    const fallback = pickHandoffSurface();
+    logToChannel(`resolveHandoffSurface(${sid}): no tracker → ${fallback}`);
+    return fallback;
+  }
+
+  // ps has priority — it sees the live process and can't be fooled by
+  // stale plugin tabs left over from previous interrupted operations.
+  const ps = await tracker.getSessionSurfaceForSid(sid);
+  if (ps !== 'unknown') {
+    logToChannel(`resolveHandoffSurface(${sid}): ps says ${ps}`);
+    return ps;
+  }
+
+  // ps 'unknown': no live --resume <sid> process found. Covers sessions
+  // started with plain `claude` (no --resume flag) and already-exited
+  // processes. A plugin tab for this SID may exist but is likely stale.
+  // Default to 'terminal' — no live plugin process means no popup needed.
+  logToChannel(`resolveHandoffSurface(${sid}): ps unknown → terminal`);
+  return 'terminal';
+}
+
+/**
  * Outcome of pickHandoffTarget — caller dispatches the right CLI args
  * based on whether the user picked an existing session or "start new".
  */
@@ -157,34 +201,17 @@ async function pickHandoffTarget(
 }
 
 /**
- * Outcome of pickReturnTarget. `legacy` covers the pre-Phase-2 case
- * where active_side=remote but RemoteSIDs is empty — those projects
- * still use the whole-project return CLI path (no flag).
+ * Outcome of pickReturnTarget.
  */
 type ReturnPick =
   | { kind: 'session'; sessionId: string }
-  | { kind: 'all' }
-  | { kind: 'legacy' };
+  | { kind: 'all' };
 
 async function pickReturnTarget(
   cwd: string,
   remoteSids: string[],
   focusedSid: string | undefined,
-  legacyMode: boolean,
 ): Promise<ReturnPick | undefined> {
-  if (legacyMode) {
-    const ok = await vscode.window.showInformationMessage(
-      'Return the project session to your laptop?',
-      {
-        modal: true,
-        detail:
-          'This project was handed off in legacy whole-project mode. Returning syncs all remote state back and stops the VM.',
-      },
-      'Return',
-    );
-    return ok === 'Return' ? { kind: 'legacy' } : undefined;
-  }
-
   // Per-session picker: list remote sessions only, with first-message
   // labels read from the local JSONLs (handoff already synced the
   // JSONL back, so the file is on disk locally either way).
@@ -327,10 +354,18 @@ export function registerCommands(
   // out-of-process; refresh on a short delay so the new state.json is
   // visible to `moorpost status`.
   const refreshTreeAfter = (ms: number) => {
-    setTimeout(() => {
-      if (treeProvider) treeProvider.refresh();
-      refreshStatusBarNow();
-    }, ms);
+    // Refresh status bar and tree immediately — CLI has already exited
+    // and state.json is up to date at this point.
+    refreshStatusBarNow();
+    if (treeProvider) treeProvider.refresh();
+    // Second refresh after `ms` catches mutagen sync-lag (session labels
+    // from remote JSONLs may land slightly after CLI exit).
+    if (ms > 0) {
+      setTimeout(() => {
+        if (treeProvider) treeProvider.refresh();
+        refreshStatusBarNow();
+      }, ms);
+    }
   };
 
   const sessionPreview = async (cwd: string, sid: string): Promise<string> => {
@@ -578,11 +613,15 @@ export function registerCommands(
         logToChannel(`handoff: captured new session sid=${newSid}`);
         handoffArgs.push('--session', newSid);
       }
-      // Pre-flight: for plugin surface, ask user to close the panel
-      // before we run the CLI. Non-blocking so they can interact with
-      // VSCode to close the tab, then click Continue.
-      const handoffSurface = pickHandoffSurface();
+      // Surface decision is per-SID. The session being handed off may live
+      // in a terminal while the project also has plugin routing active
+      // (or vice-versa). Use resolveHandoffSurfaceForSid which checks
+      // in priority order: explicit config → known plugin tab → ps parent
+      // inspection → terminal-open heuristic → project-wide fallback.
       const handoffSid = handoffArgs.find((_, i) => handoffArgs[i - 1] === '--session');
+      const handoffSurface = handoffSid
+        ? await resolveHandoffSurfaceForSid(handoffSid)
+        : pickHandoffSurface();
       if (handoffSurface === 'plugin' && handoffSid) {
         const confirmed = await preflightClosePrompt(cwd, handoffSid, 'remote');
         if (!confirmed) return;
@@ -599,7 +638,21 @@ export function registerCommands(
           .getConfiguration('moorpost')
           .get<boolean>('autoAttachOnHandoff', true);
         if (auto && handoffSurface === 'terminal') {
-          openRemoteClaude(cwd);
+          // Find the exact terminal hosting the local claude session by
+          // matching its shell PID. Safer than activeTerminal which can
+          // return the Claude Code plugin's pseudoterminal.
+          let reuseTerminal: vscode.Terminal | undefined;
+          if (handoffSid) {
+            const shellPid = await getSessionTracker()?.getShellPidForSid(handoffSid);
+            if (shellPid !== undefined) {
+              for (const t of vscode.window.terminals) {
+                if (t.exitStatus) continue;
+                const pid = await t.processId;
+                if (pid === shellPid) { reuseTerminal = t; break; }
+              }
+            }
+          }
+          openRemoteClaude(cwd, reuseTerminal);
         } else if (auto && handoffSurface === 'plugin') {
           await routePluginToRemote();
           const refreshed = await getStatus(cwd);
@@ -634,9 +687,7 @@ export function registerCommands(
         return;
       }
       const remoteSids = status.remote_sids ?? [];
-      const legacyWholeProjectRemote =
-        remoteSids.length === 0 && (status.active_side ?? 'local') === 'remote';
-      if (remoteSids.length === 0 && !legacyWholeProjectRemote) {
+      if (remoteSids.length === 0) {
         vscode.window.showInformationMessage(
           'No sessions on remote — nothing to return.',
         );
@@ -656,7 +707,6 @@ export function registerCommands(
         cwd,
         remoteSids,
         focusedSid,
-        legacyWholeProjectRemote,
       );
       if (!picked) return;
 
@@ -668,7 +718,14 @@ export function registerCommands(
       }
       // Legacy whole-project return: no flag, CLI keeps old behavior.
 
-      const surface = pickHandoffSurface();
+      // Per-SID surface detection (mirror of handoff). Use
+      // resolveHandoffSurfaceForSid which is reliable for both plugin
+      // panels (tab map + ps) and terminal sessions (ps unknown →
+      // terminal-open heuristic).
+      const surface =
+        picked.kind === 'session'
+          ? await resolveHandoffSurfaceForSid(picked.sessionId)
+          : pickHandoffSurface();
       closeClaudeTerminalQuietly();
 
       // Pre-flight: for plugin surface, ask user to close the panel(s)
@@ -758,8 +815,10 @@ export function registerCommands(
         vscode.window.showWarningMessage('moorpost.returnSession: missing session id');
         return;
       }
+      const preview = await sessionPreview(cwd, sid);
+      const previewShort = preview.length > 60 ? preview.slice(0, 60) + '…' : preview;
       const choice = await vscode.window.showInformationMessage(
-        `Return session ${sid.slice(0, 8)}… to local?`,
+        `Return "${previewShort}" to local?`,
         { modal: false, detail: 'Pulls the session JSONL back from the VM. The VM stays running unless this is the last remote session.' },
         'Return',
       );
