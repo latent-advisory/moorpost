@@ -10,8 +10,9 @@
 // All Node I/O is dependency-injected so unit tests can drive the
 // orchestrator without touching the network or the real filesystem.
 
-import * as vscode from 'vscode';
+import * as path from 'node:path';
 import { createHash } from 'node:crypto';
+import * as vscode from 'vscode';
 
 export const MIN_CLI_VERSION = '1.1.5';
 
@@ -23,8 +24,6 @@ export interface SpawnResult {
   stderr: string;
 }
 
-// The subset of `node:fs/promises` the installer uses. Splitting it out
-// lets tests provide a hand-rolled mock without faking the whole module.
 export interface InstallerFs {
   mkdir(path: string, opts: { recursive: boolean }): Promise<void>;
   writeFile(path: string, data: Buffer): Promise<void>;
@@ -45,10 +44,6 @@ export interface InstallerDeps {
   cliPathSetting: string | undefined;
 }
 
-/**
- * Probe the CLI for `--version` and parse the leading vX.Y.Z token.
- * Returns null if the binary isn't on PATH (ENOENT) or output is unparseable.
- */
 export function readInstalledVersion(deps: InstallerDeps): string | null {
   const bin = deps.cliPathSetting || 'moorpost';
   let result: SpawnResult;
@@ -62,7 +57,6 @@ export function readInstalledVersion(deps: InstallerDeps): string | null {
   return match ? match[1] : null;
 }
 
-/** Compare semver-shaped strings. Returns -1, 0, 1. */
 export function compareVersions(a: string, b: string): number {
   const pa = a.split('.').map((n) => parseInt(n, 10));
   const pb = b.split('.').map((n) => parseInt(n, 10));
@@ -73,11 +67,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-/**
- * Map (platform, arch) to the release asset name. Returns null for
- * unsupported combinations (Windows, ia32, etc.) so callers can surface
- * a manual-install message instead of trying to download.
- */
 export function resolveAssetName(platform: NodeJS.Platform, arch: string): string | null {
   if (platform !== 'darwin' && platform !== 'linux') return null;
   let normalized: 'amd64' | 'arm64';
@@ -87,12 +76,10 @@ export function resolveAssetName(platform: NodeJS.Platform, arch: string): strin
   return `moorpost-${platform}-${normalized}`;
 }
 
-/** Pull the SHA-256 hash for a given asset name from a SHA256SUMS body. */
 export function parseShaLine(sumsBody: string, asset: string): string | null {
   for (const line of sumsBody.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
-    // Format: "<64-hex>  <filename>" — `shasum -a 256` output.
     const match = trimmed.match(/^([0-9a-fA-F]{64})\s+(\S+)$/);
     if (match && match[2] === asset) return match[1].toLowerCase();
   }
@@ -105,11 +92,6 @@ export interface DownloadAndVerifyArgs {
   httpsGet: InstallerDeps['httpsGet'];
 }
 
-/**
- * Download the asset binary, fetch SHA256SUMS, verify, and return the
- * binary buffer. Throws on any failure (network non-200, missing SHA
- * entry, hash mismatch).
- */
 export async function downloadAndVerify(args: DownloadAndVerifyArgs): Promise<Buffer> {
   const binUrl = `${RELEASE_BASE}/v${args.version}/${args.asset}`;
   const sumsUrl = `${RELEASE_BASE}/v${args.version}/SHA256SUMS`;
@@ -122,7 +104,6 @@ export async function downloadAndVerify(args: DownloadAndVerifyArgs): Promise<Bu
   if (sumsResp.status !== 200) {
     throw new Error(`download SHA256SUMS: HTTP ${sumsResp.status}`);
   }
-
   const expected = parseShaLine(sumsResp.body.toString('utf8'), args.asset);
   if (!expected) {
     throw new Error(`no SHA256SUMS entry for ${args.asset}`);
@@ -134,11 +115,92 @@ export async function downloadAndVerify(args: DownloadAndVerifyArgs): Promise<Bu
   return binResp.body;
 }
 
+/**
+ * Write the verified buffer to a temp file, ensure ~/.local/bin exists,
+ * move into place, chmod 0755, and update the moorpost.cliPath setting
+ * if ~/.local/bin isn't on the inherited PATH.
+ */
+export async function installBinary(deps: InstallerDeps, binary: Buffer): Promise<string> {
+  const tmpPath = path.join(deps.os.tmpdir(), 'moorpost.download');
+  const targetDir = path.join(deps.os.homedir(), '.local', 'bin');
+  const targetPath = path.join(targetDir, 'moorpost');
+
+  await deps.fs.writeFile(tmpPath, binary);
+  await deps.fs.mkdir(targetDir, { recursive: true });
+  try {
+    await deps.fs.rename(tmpPath, targetPath);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EXDEV') {
+      // Cross-device rename — fall back to copy + unlink.
+      await deps.fs.copyFile(tmpPath, targetPath);
+      await deps.fs.unlink(tmpPath);
+    } else {
+      throw err;
+    }
+  }
+  await deps.fs.chmod(targetPath, 0o755);
+
+  if (!isOnPath(targetDir, deps.pathEnv)) {
+    await vscode.workspace
+      .getConfiguration('moorpost')
+      .update('cliPath', targetPath, vscode.ConfigurationTarget.Global);
+  }
+  return targetPath;
+}
+
+function isOnPath(dir: string, pathEnv: string): boolean {
+  // POSIX-only — installer is darwin/linux only.
+  return pathEnv.split(':').some((entry) => entry === dir);
+}
+
 export async function ensureCliInstalled(deps: InstallerDeps): Promise<void> {
   const installed = readInstalledVersion(deps);
   if (installed && compareVersions(installed, MIN_CLI_VERSION) >= 0) {
-    return; // happy path — nothing to do.
+    return;
   }
-  // Subsequent tasks fill in the install logic.
-  void vscode; // keep import for later steps.
+
+  const asset = resolveAssetName(deps.platform, deps.arch);
+  if (!asset) {
+    const msg =
+      deps.platform === 'win32'
+        ? 'Moorpost CLI: Windows is not supported. Use WSL or install manually from the release page.'
+        : `Moorpost CLI: no automated install for ${deps.platform}/${deps.arch}. Install manually from the release page.`;
+    await showFailureToast(msg);
+    return;
+  }
+
+  try {
+    await vscode.window.withProgress(
+      {
+        location: vscode.ProgressLocation.Notification,
+        title: `Installing Moorpost CLI v${MIN_CLI_VERSION}…`,
+        cancellable: false,
+      },
+      async () => {
+        const binary = await downloadAndVerify({
+          version: MIN_CLI_VERSION,
+          asset,
+          httpsGet: deps.httpsGet,
+        });
+        const installedPath = await installBinary(deps, binary);
+        const post = readInstalledVersion({ ...deps, cliPathSetting: installedPath });
+        if (!post) {
+          throw new Error(`installed binary at ${installedPath} did not respond to --version`);
+        }
+        await vscode.window.showInformationMessage(`Moorpost CLI installed (v${post}).`);
+      },
+    );
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    await showFailureToast(`Moorpost CLI auto-install failed: ${reason}. Install manually from the release page.`);
+  }
+}
+
+async function showFailureToast(message: string): Promise<void> {
+  const choice = await vscode.window.showErrorMessage(message, 'Open release page');
+  if (choice === 'Open release page') {
+    await vscode.env.openExternal(
+      vscode.Uri.parse(`https://github.com/latent-advisory/moorpost/releases/tag/v${MIN_CLI_VERSION}`),
+    );
+  }
 }
