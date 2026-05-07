@@ -6,6 +6,8 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { ensureCliInstalled, MIN_CLI_VERSION, type InstallerDeps } from './cliInstaller.js';
+import { resolveAssetName, parseShaLine, downloadAndVerify } from './cliInstaller.js';
+import { createHash } from 'node:crypto';
 // @ts-expect-error -- shim exposes test-only mutators
 import { __callLog, __resetCallLog, __resetConfig } from '../test/vscode-shim.mjs';
 
@@ -60,5 +62,98 @@ describe('ensureCliInstalled', () => {
     });
     await ensureCliInstalled(deps);
     assert.equal(__callLog.withProgress.length, 0);
+  });
+});
+
+describe('resolveAssetName', () => {
+  it('maps darwin arm64 → moorpost-darwin-arm64', () => {
+    assert.equal(resolveAssetName('darwin', 'arm64'), 'moorpost-darwin-arm64');
+  });
+  it('maps darwin x64 → moorpost-darwin-amd64', () => {
+    assert.equal(resolveAssetName('darwin', 'x64'), 'moorpost-darwin-amd64');
+  });
+  it('maps linux arm64 → moorpost-linux-arm64', () => {
+    assert.equal(resolveAssetName('linux', 'arm64'), 'moorpost-linux-arm64');
+  });
+  it('maps linux x64 → moorpost-linux-amd64', () => {
+    assert.equal(resolveAssetName('linux', 'x64'), 'moorpost-linux-amd64');
+  });
+  it('returns null for win32', () => {
+    assert.equal(resolveAssetName('win32', 'x64'), null);
+  });
+  it('returns null for darwin ia32', () => {
+    assert.equal(resolveAssetName('darwin', 'ia32'), null);
+  });
+});
+
+describe('parseShaLine', () => {
+  it('extracts the hash for a matching asset name', () => {
+    const sums = [
+      '1111111111111111111111111111111111111111111111111111111111111111  moorpost-darwin-amd64',
+      '2222222222222222222222222222222222222222222222222222222222222222  moorpost-darwin-arm64',
+      '3333333333333333333333333333333333333333333333333333333333333333  moorpost-linux-amd64',
+    ].join('\n');
+    assert.equal(
+      parseShaLine(sums, 'moorpost-darwin-arm64'),
+      '2222222222222222222222222222222222222222222222222222222222222222',
+    );
+  });
+  it('returns null when asset is missing', () => {
+    assert.equal(parseShaLine('aaa  other-asset', 'moorpost-darwin-arm64'), null);
+  });
+});
+
+describe('downloadAndVerify', () => {
+  it('downloads, computes hash, and returns the buffer when SHA matches', async () => {
+    const binary = Buffer.from('fake-binary-bytes');
+    const expected = createHash('sha256').update(binary).digest('hex');
+    const sums = `${expected}  moorpost-darwin-arm64\n`;
+    const calls: string[] = [];
+    const httpsGet = async (url: string) => {
+      calls.push(url);
+      if (url.endsWith('moorpost-darwin-arm64')) {
+        return { status: 200, body: binary };
+      }
+      if (url.endsWith('SHA256SUMS')) {
+        return { status: 200, body: Buffer.from(sums, 'utf8') };
+      }
+      throw new Error(`unexpected url: ${url}`);
+    };
+    const result = await downloadAndVerify({
+      version: '1.1.5',
+      asset: 'moorpost-darwin-arm64',
+      httpsGet,
+    });
+    assert.equal(result.length, binary.length);
+    assert.deepEqual(Array.from(result), Array.from(binary));
+    assert.equal(calls.length, 2);
+    assert.ok(calls[0].includes('v1.1.5/moorpost-darwin-arm64'));
+    assert.ok(calls[1].endsWith('v1.1.5/SHA256SUMS'));
+  });
+
+  it('rejects on SHA mismatch', async () => {
+    const binary = Buffer.from('fake');
+    const wrongSum = '0'.repeat(64);
+    const sums = `${wrongSum}  moorpost-darwin-arm64\n`;
+    const httpsGet = async (url: string) => {
+      if (url.endsWith('moorpost-darwin-arm64')) return { status: 200, body: binary };
+      return { status: 200, body: Buffer.from(sums, 'utf8') };
+    };
+    await assert.rejects(
+      downloadAndVerify({ version: '1.1.5', asset: 'moorpost-darwin-arm64', httpsGet }),
+      /checksum mismatch/i,
+    );
+  });
+
+  it('rejects when SHA256SUMS lacks an entry for the asset', async () => {
+    const binary = Buffer.from('fake');
+    const httpsGet = async (url: string) => {
+      if (url.endsWith('moorpost-darwin-arm64')) return { status: 200, body: binary };
+      return { status: 200, body: Buffer.from('aa  some-other-file\n', 'utf8') };
+    };
+    await assert.rejects(
+      downloadAndVerify({ version: '1.1.5', asset: 'moorpost-darwin-arm64', httpsGet }),
+      /no SHA256SUMS entry/i,
+    );
   });
 });
