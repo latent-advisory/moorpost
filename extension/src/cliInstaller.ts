@@ -7,8 +7,14 @@
 // ~/.local/bin/moorpost, and writes the moorpost.cliPath setting if
 // ~/.local/bin isn't on the inherited PATH.
 //
-// All Node I/O is dependency-injected so unit tests can drive the
-// orchestrator without touching the network or the real filesystem.
+// Node I/O (os/fs/https/child_process) is dependency-injected via the
+// `deps` argument so unit tests can drive the orchestrator without
+// touching the network or the real filesystem. The `vscode` API surface
+// (workspace.getConfiguration, window.withProgress, showInformationMessage,
+// showErrorMessage, env.openExternal) is intentionally NOT in `deps`;
+// it is mocked at module-load time via extension/test/vscode-shim.mjs,
+// which the test loader registers before this file is imported. Both
+// boundaries are intentional design choices.
 
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
