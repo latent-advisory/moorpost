@@ -393,7 +393,7 @@ sync.Register("mutagen", mutagen.New)
 
 ### 7.2 CLI auto-install
 
-The extension is published to the VS Code Marketplace as `LatentAdvisory.moorpost`. The Marketplace listing only ships the TypeScript bundle — the Go CLI is a separate per-platform binary on the GitHub release page.
+The extension is published to the VS Code Marketplace as `LatentAdvisory.moorpost-vscode` (the bare `moorpost` name is reserved at the Marketplace from a prior, deleted listing — to be reclaimed via Microsoft support and renamed back at that point). The Marketplace listing only ships the TypeScript bundle — the Go CLI is a separate per-platform binary on the GitHub release page.
 
 To remove the manual-binary-download step from the install flow, the extension carries `extension/src/cliInstaller.ts`:
 

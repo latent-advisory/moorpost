@@ -12,10 +12,10 @@ Companion UI to the [moorpost](https://github.com/latent-advisory/moorpost) CLI.
 
 ## Install
 
-Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=LatentAdvisory.moorpost):
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=LatentAdvisory.moorpost-vscode):
 
 ```sh
-code --install-extension LatentAdvisory.moorpost
+code --install-extension LatentAdvisory.moorpost-vscode
 ```
 
 The first time the extension activates, it auto-downloads the matching `moorpost` CLI binary from the GitHub release, verifies its SHA-256 against the published `SHA256SUMS`, and installs it to `~/.local/bin/moorpost`. If that directory isn't on your `PATH`, the extension also writes the absolute path to its own `moorpost.cliPath` setting so commands keep working without shell changes.

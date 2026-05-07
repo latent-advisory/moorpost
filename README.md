@@ -50,7 +50,7 @@ You'll need macOS or Linux, a Google Cloud Platform account (GCP for v1.x), and 
 ### VS Code extension (recommended)
 
 ```sh
-code --install-extension LatentAdvisory.moorpost
+code --install-extension LatentAdvisory.moorpost-vscode
 ```
 
 The extension auto-downloads the matching `moorpost` CLI on first activation — no separate binary install step.

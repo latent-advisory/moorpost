@@ -187,7 +187,7 @@ export async function maybeShowFirstRunNudge(
   } else if (choice === 'Open walkthrough') {
     await vscode.commands.executeCommand(
       'workbench.action.openWalkthrough',
-      'LatentAdvisory.moorpost#moorpost.gettingStarted',
+      'LatentAdvisory.moorpost-vscode#moorpost.gettingStarted',
       true,
     );
   }
