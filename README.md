@@ -45,20 +45,33 @@ The existing options force a tradeoff:
 
 ## Install
 
-You'll need macOS or Linux, a cloud provider account (GCP for v1.0), and a Claude Code subscription (or `ANTHROPIC_API_KEY`).
+You'll need macOS or Linux, a Google Cloud Platform account (GCP for v1.x), and a Claude Code subscription (or `ANTHROPIC_API_KEY`).
 
-```bash
-# Build from source (marketplace listing comes with v1.1)
-git clone https://github.com/latent-advisory/moorpost.git
-cd moorpost
-make build install         # installs `moorpost` to /usr/local/bin
+### VS Code extension (recommended)
 
-# Optional: VSCode extension
-make package-extension     # produces extension/moorpost-X.Y.Z.vsix
-code --install-extension extension/moorpost-*.vsix
+```sh
+code --install-extension LatentAdvisory.moorpost
 ```
 
-See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough.
+The extension auto-downloads the matching `moorpost` CLI on first activation — no separate binary install step.
+
+### CLI only
+
+Download the binary for your platform from the [latest release](https://github.com/latent-advisory/moorpost/releases/latest) and put it on your `PATH`:
+
+```sh
+# macOS Apple Silicon
+curl -L https://github.com/latent-advisory/moorpost/releases/latest/download/moorpost-darwin-arm64 \
+  -o /usr/local/bin/moorpost && chmod +x /usr/local/bin/moorpost
+```
+
+Or build from source:
+
+```sh
+git clone https://github.com/latent-advisory/moorpost.git
+cd moorpost
+make build install
+```
 
 ## Quickstart (60 seconds)
 
