@@ -73,6 +73,8 @@ cd moorpost
 make build install
 ```
 
+See [docs/quickstart.md](docs/quickstart.md) for the full walkthrough.
+
 ## Quickstart (60 seconds)
 
 ```bash
