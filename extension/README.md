@@ -4,19 +4,23 @@
 
 Companion UI to the [moorpost](https://github.com/latent-advisory/moorpost) CLI. The extension is a thin shell — the CLI does all the real work — but it surfaces every piece of state you care about and removes the need to remember commands.
 
+## Requirements
+
+- macOS or Linux (Windows is not supported; use WSL).
+- A **Google Cloud Platform** project. GCP is the only provider Moorpost ships with today; AWS / Azure are on the roadmap. You'll need permission to create Compute Engine instances in the project.
+- A Claude Code subscription (or `ANTHROPIC_API_KEY`).
+
 ## Install
 
-The marketplace listing arrives with v1.1. For now, install from a packaged `.vsix`:
+Install from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=LatentAdvisory.moorpost):
 
-```bash
-git clone https://github.com/latent-advisory/moorpost.git
-cd moorpost
-make build install                       # installs the `moorpost` CLI
-make package-extension                   # produces extension/moorpost-X.Y.Z.vsix
-code --install-extension extension/moorpost-*.vsix
+```sh
+code --install-extension LatentAdvisory.moorpost
 ```
 
-The extension expects the `moorpost` CLI on your `PATH`. Override the path via the `moorpost.cliPath` setting if it lives elsewhere.
+The first time the extension activates, it auto-downloads the matching `moorpost` CLI binary from the GitHub release, verifies its SHA-256 against the published `SHA256SUMS`, and installs it to `~/.local/bin/moorpost`. If that directory isn't on your `PATH`, the extension also writes the absolute path to its own `moorpost.cliPath` setting so commands keep working without shell changes.
+
+If the auto-install fails (offline, sandboxed CI environment, etc.), a toast surfaces a one-click link to the [GitHub release page](https://github.com/latent-advisory/moorpost/releases/latest) where you can grab the binary manually.
 
 ## The flow
 
