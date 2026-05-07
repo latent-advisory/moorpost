@@ -391,6 +391,21 @@ sync.Register("mutagen", mutagen.New)
 
 **Audit:** every CLI invocation logs to `~/.moorpost/logs/`. `moorpost audit` (v0.3) prints the last N actions with timestamps for security review.
 
+### 7.2 CLI auto-install
+
+The extension is published to the VS Code Marketplace as `LatentAdvisory.moorpost`. The Marketplace listing only ships the TypeScript bundle — the Go CLI is a separate per-platform binary on the GitHub release page.
+
+To remove the manual-binary-download step from the install flow, the extension carries `extension/src/cliInstaller.ts`:
+
+- On every activation, it spawns `<cliBinary()> --version` and parses the leading semver token.
+- If the binary is missing (`ENOENT`) or its version is below the extension-declared `MIN_CLI_VERSION`, it picks the right asset for `process.platform` × `process.arch`, downloads it from `https://github.com/latent-advisory/moorpost/releases/download/v<MIN_CLI_VERSION>/<asset>`, fetches `SHA256SUMS` from the same release, verifies the hash, writes the binary to `~/.local/bin/moorpost` (mode 0755), and updates `moorpost.cliPath` if `~/.local/bin` isn't on the inherited `PATH`.
+- All Node I/O is dependency-injected so the orchestrator is unit-testable through the existing `node --test` + loader-shim setup; see `extension/src/cliInstaller.test.mts`.
+- `MIN_CLI_VERSION` is bumped only when the extension actually depends on a new CLI feature — the floor is one-directional (extension → CLI) and not a strict lock-step. Each release that bumps the floor triggers a re-download for users on stale binaries.
+
+Failures (offline, sandboxed CI, unsupported platform like Windows, SHA mismatch, FS error) surface as a non-modal error toast with a one-click "Open release page" link. The extension does not block activation on auto-install failure — users with a working binary are unaffected.
+
+Out of scope: GPG signature verification, Windows support, hot updates when the extension is older than the installed CLI.
+
 ## 8. Repo structure
 
 ```
@@ -649,21 +664,6 @@ The handoff design is **manual-primary, smart-prompts-as-safety-net**. The user 
 11. **Multi-machine usage** — user has laptop + desktop, both Moorpost-installed, sharing one VM. State file is per-machine; sync conflicts on `~/.claude/projects/` if both initiate handoff. Recommend: v1 documents the limitation ("treat each machine's Moorpost as independent; only one machine should be active at a time"). v2 considers a "fleet mode" with a server-side lock.
 12. **Telemetry scope** — when opt-in, what's collected? Recommend: command name, exit code, command duration, OS, CLI version. No project names, no file paths, no GCP project IDs, no error messages (might leak paths). Endpoint: a small Cloudflare Worker; raw events appended to a Cloudflare D1 table; aggregated weekly. Decision: opt-in only, ever; never default-on, even with prompt.
 13. **Logging** — local CLI logs at `~/.moorpost/logs/<date>.log`, rotated daily, 30-day retention. `moorpost doctor --logs` tails them. Remote logs in `/var/log/moorpost/` on the VM, accessible via `moorpost logs --remote`.
-
-### 10.1 CLI auto-install
-
-The extension is published to the VS Code Marketplace as `LatentAdvisory.moorpost`. The Marketplace listing only ships the TypeScript bundle — the Go CLI is a separate per-platform binary on the GitHub release page.
-
-To remove the manual-binary-download step from the install flow, the extension carries `extension/src/cliInstaller.ts`:
-
-- On every activation, it spawns `<cliBinary()> --version` and parses the leading semver token.
-- If the binary is missing (`ENOENT`) or its version is below the extension-declared `MIN_CLI_VERSION`, it picks the right asset for `process.platform` × `process.arch`, downloads it from `https://github.com/latent-advisory/moorpost/releases/download/v<MIN_CLI_VERSION>/<asset>`, fetches `SHA256SUMS` from the same release, verifies the hash, writes the binary to `~/.local/bin/moorpost` (mode 0755), and updates `moorpost.cliPath` if `~/.local/bin` isn't on the inherited `PATH`.
-- All Node I/O is dependency-injected so the orchestrator is unit-testable through the existing `node --test` + loader-shim setup; see `extension/src/cliInstaller.test.mts`.
-- `MIN_CLI_VERSION` is bumped only when the extension actually depends on a new CLI feature — the floor is one-directional (extension → CLI) and not a strict lock-step. Each release that bumps the floor triggers a re-download for users on stale binaries.
-
-Failures (offline, sandboxed CI, unsupported platform like Windows, SHA mismatch, FS error) surface as a non-modal error toast with a one-click "Open release page" link. The extension does not block activation on auto-install failure — users with a working binary are unaffected.
-
-Out of scope: GPG signature verification, Windows support, hot updates when the extension is older than the installed CLI.
 
 ## 11. Risks
 
