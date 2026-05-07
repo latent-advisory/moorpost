@@ -184,19 +184,58 @@
     ],
     "menus": {
       "commandPalette": [
-        { "command": "moorpost.refreshTree", "when": "false" },
-        { "command": "moorpost.initProject", "when": "false" },
-        { "command": "moorpost.runSetup", "when": "false" },
-        { "command": "moorpost.signIn", "when": "false" },
-        { "command": "moorpost.handoff", "when": "moorpost.configured" },
-        { "command": "moorpost.return", "when": "moorpost.configured" },
-        { "command": "moorpost.toggleSide", "when": "moorpost.configured" },
-        { "command": "moorpost.provision", "when": "moorpost.configured" },
-        { "command": "moorpost.attach", "when": "moorpost.configured" },
-        { "command": "moorpost.destroy", "when": "moorpost.configured" },
-        { "command": "moorpost.showCost", "when": "moorpost.configured" },
-        { "command": "moorpost.showConflicts", "when": "moorpost.configured" },
-        { "command": "moorpost.editConfig", "when": "moorpost.configured" }
+        {
+          "command": "moorpost.refreshTree",
+          "when": "false"
+        },
+        {
+          "command": "moorpost.initProject",
+          "when": "false"
+        },
+        {
+          "command": "moorpost.runSetup",
+          "when": "false"
+        },
+        {
+          "command": "moorpost.signIn",
+          "when": "false"
+        },
+        {
+          "command": "moorpost.handoff",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.return",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.toggleSide",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.provision",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.attach",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.destroy",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.showCost",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.showConflicts",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.editConfig",
+          "when": "moorpost.configured"
+        }
       ],
       "view/title": [
         {
@@ -292,7 +331,11 @@
         },
         "moorpost.handoffSurface": {
           "type": "string",
-          "enum": ["auto", "terminal", "plugin"],
+          "enum": [
+            "auto",
+            "terminal",
+            "plugin"
+          ],
           "enumDescriptions": [
             "Detect from current state — terminal if a Moorpost: Claude terminal is open, plugin if the Anthropic Claude Code plugin is installed and routed, otherwise terminal.",
             "Always swap the Moorpost: Claude terminal; never touch the Anthropic Claude Code plugin's wrapper.",
@@ -314,8 +357,8 @@
   "devDependencies": {
     "@types/node": "^20",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.9.1",
     "esbuild": "^0.21.0",
-    "typescript": "^5.3.0",
-    "@vscode/vsce": "^3.0.0"
+    "typescript": "^5.3.0"
   }
 }
