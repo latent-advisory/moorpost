@@ -48,6 +48,9 @@ export interface InstallerDeps {
   arch: string;
   pathEnv: string;
   cliPathSetting: string | undefined;
+  // Optional logger; in production points at the "Moorpost" Output channel
+  // so users can diagnose install hangs. Tests pass a no-op or undefined.
+  log?: (msg: string) => void;
 }
 
 export function readInstalledVersion(deps: InstallerDeps): string | null {
@@ -160,10 +163,14 @@ function isOnPath(dir: string, pathEnv: string): boolean {
 }
 
 export async function ensureCliInstalled(deps: InstallerDeps): Promise<void> {
+  const log = deps.log ?? (() => {});
+  log(`ensureCliInstalled: probing ${deps.cliPathSetting || 'moorpost'} --version`);
   const installed = readInstalledVersion(deps);
   if (installed && compareVersions(installed, MIN_CLI_VERSION) >= 0) {
+    log(`ensureCliInstalled: installed v${installed} >= min v${MIN_CLI_VERSION}; skipping install`);
     return;
   }
+  log(`ensureCliInstalled: installed=${installed ?? 'none'}, min=${MIN_CLI_VERSION}; install needed`);
 
   const asset = resolveAssetName(deps.platform, deps.arch);
   if (!asset) {
@@ -171,9 +178,11 @@ export async function ensureCliInstalled(deps: InstallerDeps): Promise<void> {
       deps.platform === 'win32'
         ? 'Moorpost CLI: Windows is not supported. Use WSL or install manually from the release page.'
         : `Moorpost CLI: no automated install for ${deps.platform}/${deps.arch}. Install manually from the release page.`;
-    await showFailureToast(msg);
+    log(`ensureCliInstalled: unsupported platform ${deps.platform}/${deps.arch}`);
+    showFailureToast(msg);
     return;
   }
+  log(`ensureCliInstalled: target asset ${asset} for v${MIN_CLI_VERSION}`);
 
   try {
     await vscode.window.withProgress(
@@ -182,31 +191,46 @@ export async function ensureCliInstalled(deps: InstallerDeps): Promise<void> {
         title: `Installing Moorpost CLI v${MIN_CLI_VERSION}…`,
         cancellable: false,
       },
-      async () => {
+      async (progress) => {
+        progress.report({ message: 'downloading…' });
+        log('install: downloading binary + SHA256SUMS');
         const binary = await downloadAndVerify({
           version: MIN_CLI_VERSION,
           asset,
           httpsGet: deps.httpsGet,
         });
+        log(`install: download ok (${binary.length} bytes); SHA verified`);
+        progress.report({ message: 'installing…' });
         const installedPath = await installBinary(deps, binary);
+        log(`install: wrote binary to ${installedPath}`);
+        progress.report({ message: 'verifying…' });
         const post = readInstalledVersion({ ...deps, cliPathSetting: installedPath });
         if (!post) {
           throw new Error(`installed binary at ${installedPath} did not respond to --version`);
         }
-        await vscode.window.showInformationMessage(`Moorpost CLI installed (v${post}).`);
+        log(`install: post-install version check → v${post}`);
+        // Fire-and-forget: showInformationMessage's Thenable only resolves
+        // when the user dismisses the toast. Awaiting it would hang
+        // activation indefinitely. The toast still appears; we just don't
+        // care when the user closes it.
+        void vscode.window.showInformationMessage(`Moorpost CLI installed (v${post}).`);
       },
     );
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    await showFailureToast(`Moorpost CLI auto-install failed: ${reason}. Install manually from the release page.`);
+    log(`install: failed — ${reason}`);
+    showFailureToast(`Moorpost CLI auto-install failed: ${reason}. Install manually from the release page.`);
   }
 }
 
-async function showFailureToast(message: string): Promise<void> {
-  const choice = await vscode.window.showErrorMessage(message, 'Open release page');
-  if (choice === 'Open release page') {
-    await vscode.env.openExternal(
-      vscode.Uri.parse(`https://github.com/latent-advisory/moorpost/releases/tag/v${MIN_CLI_VERSION}`),
-    );
-  }
+// Fire-and-forget. The button-click handler runs off the chained .then
+// so callers don't have to await user interaction.
+function showFailureToast(message: string): void {
+  void vscode.window.showErrorMessage(message, 'Open release page').then((choice) => {
+    if (choice === 'Open release page') {
+      void vscode.env.openExternal(
+        vscode.Uri.parse(`https://github.com/latent-advisory/moorpost/releases/tag/v${MIN_CLI_VERSION}`),
+      );
+    }
+  });
 }

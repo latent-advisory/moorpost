@@ -121,6 +121,18 @@ What you see, in order:
 4. Notification: *"Stopping my-app-vm…"* (default; toggle via `moorpost.autoStopWhenNoRemoteSessions`).
 5. Status bar back to `☁ local · stopped · $0.42`.
 
+### Always-on remote (skip the return)
+
+If you don't care about cost optimization and just want the laptop-close-doesn't-matter benefit, you can stay on remote indefinitely after the first handoff:
+
+- Trigger handoff once. The session is now on the VM.
+- Keep working from the **"Moorpost: Claude (remote)"** terminal (or the Anthropic Claude Code panel, if that's your routed surface). Files round-trip via mutagen continuously, so editing a file in VSCode locally is reflected in the VM and vice versa.
+- Skip the return. Open VSCode tomorrow morning, the session is still running on the VM, the terminal reattaches automatically.
+
+The VM still auto-stops on idle (default 60 min, configurable via `persistent.auto_stop_minutes` in `.moorpost/config.yaml`), and the next prompt re-starts it transparently — so your bill is bounded even in always-on mode. The tradeoff vs. local-first: latency is whatever your VM's region adds (~30 ms typical), and you're paying the full hourly rate while the VM is running, not just while you're actively prompting.
+
+Mix and match: the per-session model means you can have one session always-on-remote (a long-running agent loop) while another session does the local-first dance for ergonomic editing.
+
 ### Smart handoff prompts
 
 The extension watches three signals and offers a non-modal *"Hand off to remote?"* notification when you appear to have stepped away — so you don't have to remember:

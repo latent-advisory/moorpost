@@ -23,12 +23,16 @@ export function getSessionTracker(): SessionTracker | undefined {
   return sessionTracker;
 }
 
+// Per-request timeout for httpsGet — guards against hung TLS handshakes
+// or stalled CDN connections during the auto-install download.
+const HTTP_REQUEST_TIMEOUT_MS = 30_000;
+
 /**
  * Builds the production InstallerDeps from Node built-ins. Kept here
  * (not in cliInstaller.ts) so the installer module stays free of
  * top-level Node imports we'd otherwise have to mock in unit tests.
  */
-function buildInstallerDeps(): InstallerDeps {
+function buildInstallerDeps(log: (msg: string) => void): InstallerDeps {
   return {
     spawnSync: (cmd, args, opts) => {
       const result = spawnSync(cmd, args, { encoding: 'utf8', ...(opts ?? {}) });
@@ -45,20 +49,22 @@ function buildInstallerDeps(): InstallerDeps {
             reject(new Error(`too many redirects fetching ${url}`));
             return;
           }
-          https
-            .get(target, (res) => {
-              const status = res.statusCode ?? 0;
-              if (status >= 300 && status < 400 && res.headers.location) {
-                res.resume();
-                get(res.headers.location, hopsLeft - 1);
-                return;
-              }
-              const chunks: Buffer[] = [];
-              res.on('data', (c) => chunks.push(Buffer.from(c)));
-              res.on('end', () => resolve({ status, body: Buffer.concat(chunks) }));
-              res.on('error', reject);
-            })
-            .on('error', reject);
+          const req = https.get(target, (res) => {
+            const status = res.statusCode ?? 0;
+            if (status >= 300 && status < 400 && res.headers.location) {
+              res.resume();
+              get(res.headers.location, hopsLeft - 1);
+              return;
+            }
+            const chunks: Buffer[] = [];
+            res.on('data', (c) => chunks.push(Buffer.from(c)));
+            res.on('end', () => resolve({ status, body: Buffer.concat(chunks) }));
+            res.on('error', reject);
+          });
+          req.setTimeout(HTTP_REQUEST_TIMEOUT_MS, () => {
+            req.destroy(new Error(`timeout (>${HTTP_REQUEST_TIMEOUT_MS}ms) fetching ${target}`));
+          });
+          req.on('error', reject);
         };
         get(url, 5);
       }),
@@ -68,13 +74,25 @@ function buildInstallerDeps(): InstallerDeps {
     arch: process.arch,
     pathEnv: process.env.PATH ?? '',
     cliPathSetting: vscode.workspace.getConfiguration('moorpost').get<string>('cliPath') || undefined,
+    log,
   };
 }
 
-export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  // Run the CLI auto-installer first so every subsequent command finds a
-  // working binary. Failures surface as toasts but don't block activation.
-  await ensureCliInstalled(buildInstallerDeps());
+export function activate(context: vscode.ExtensionContext): void {
+  // Output channel created first so the installer (and the rest of
+  // activation) can log into the same surface. Visible in Output → "Moorpost".
+  const out = vscode.window.createOutputChannel('Moorpost');
+  out.appendLine(`Moorpost extension activated at ${new Date().toISOString()}`);
+  context.subscriptions.push(out);
+  const log = (msg: string) => out.appendLine(`[cliInstaller] ${msg}`);
+
+  // Kick off the CLI auto-installer in the background. Awaiting it here
+  // would block the rest of activation — including command registration —
+  // until the install completes. Worse, in older revisions a hung toast
+  // could leave activation pending forever. Subsequent commands handle a
+  // missing binary gracefully via the doctor flow if the install is still
+  // in progress when the user clicks something.
+  void ensureCliInstalled(buildInstallerDeps(log));
 
   sessionTracker = new SessionTracker();
   context.subscriptions.push({ dispose: () => sessionTracker?.dispose() });
@@ -97,12 +115,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   const idle = new IdleMonitor();
   idle.start(context);
-
-  // Smoke-log so the user can confirm the extension activated. Visible in
-  // Output → "Moorpost".
-  const out = vscode.window.createOutputChannel('Moorpost');
-  out.appendLine(`Moorpost extension activated at ${new Date().toISOString()}`);
-  context.subscriptions.push(out);
 }
 
 export function deactivate(): void {
