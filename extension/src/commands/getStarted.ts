@@ -61,13 +61,19 @@ export async function bootstrapProject(): Promise<void> {
   const gcloudPick = await pickGCloudConfig();
   if (gcloudPick === undefined) return; // user dismissed
 
+  // Native region picker. Auto-selects based on the user's IANA timezone
+  // so EU users don't end up with us-central1 by default. Bootstrap
+  // forwards --region to its `init` step.
+  const region = await pickRegion();
+  if (!region) return;
+
   // Native machine-type picker so the user sees rates/sizes inline (instead
   // of the in-terminal picker scrolling past during bootstrap). Bootstrap
   // forwards --machine-type to its `init` step.
   const machineType = await pickMachineType();
   if (!machineType) return; // user dismissed
 
-  const args = ['bootstrap', '--yes', `--machine-type=${machineType}`];
+  const args = ['bootstrap', '--yes', `--region=${region}`, `--machine-type=${machineType}`];
   if (provisionChoice.provision) args.push('--provision');
   if (gcloudPick !== 'fallback-to-terminal') {
     args.push(`--gcp-config=${gcloudPick.name}`);
@@ -184,6 +190,86 @@ async function pickMachineType(): Promise<string | undefined> {
     matchOnDetail: true,
   });
   return picked?.type;
+}
+
+/**
+ * Common GCP regions exposed in the picker. The full GCP catalog is ~40+
+ * regions but the auto-install + handoff latency story only really works
+ * within a few hundred km of the user, so we expose one canonical pick per
+ * major continent and let users edit `.moorpost/config.yaml` for anything
+ * exotic. The `tz` array is the IANA-prefix list we use for auto-detect.
+ *
+ * Hourly rates are e2-standard-2 list price; rate ratios are roughly the
+ * same across machine types so this column gives the right "feel" for
+ * cost-vs-region trade-offs.
+ */
+interface RegionOption {
+  region: string;
+  /** Plain-English location for the picker description. */
+  location: string;
+  /** e2-standard-2 hourly rate (USD) for "EU is ~10% pricier" intuition. */
+  hourlyUSD: number;
+  /** IANA timezone prefixes that should auto-select this region. */
+  tz: string[];
+}
+
+const REGION_OPTIONS: RegionOption[] = [
+  { region: 'us-central1', location: 'Iowa, USA', hourlyUSD: 0.067, tz: ['America/Chicago', 'America/Mexico_City', 'America/Bogota', 'America/Lima'] },
+  { region: 'us-east1', location: 'South Carolina, USA', hourlyUSD: 0.067, tz: ['America/New_York', 'America/Toronto', 'America/Sao_Paulo', 'America/Argentina/Buenos_Aires'] },
+  { region: 'us-west1', location: 'Oregon, USA', hourlyUSD: 0.067, tz: ['America/Los_Angeles', 'America/Vancouver', 'America/Anchorage', 'Pacific/Honolulu'] },
+  { region: 'europe-west1', location: 'Belgium', hourlyUSD: 0.0735, tz: ['Europe/London', 'Europe/Dublin', 'Europe/Brussels', 'Europe/Amsterdam', 'Europe/Lisbon', 'Europe/Madrid'] },
+  { region: 'europe-west3', location: 'Frankfurt, Germany', hourlyUSD: 0.0773, tz: ['Europe/Berlin', 'Europe/Vienna', 'Europe/Paris', 'Europe/Zurich', 'Europe/Rome', 'Europe/Warsaw', 'Europe/Prague', 'Europe/Copenhagen', 'Europe/Stockholm', 'Europe/Helsinki'] },
+  { region: 'asia-northeast1', location: 'Tokyo, Japan', hourlyUSD: 0.0807, tz: ['Asia/Tokyo', 'Asia/Seoul'] },
+  { region: 'asia-southeast1', location: 'Singapore', hourlyUSD: 0.0788, tz: ['Asia/Singapore', 'Asia/Bangkok', 'Asia/Hong_Kong', 'Asia/Jakarta', 'Asia/Kuala_Lumpur', 'Asia/Manila', 'Asia/Ho_Chi_Minh', 'Asia/Taipei'] },
+  { region: 'australia-southeast1', location: 'Sydney, Australia', hourlyUSD: 0.0958, tz: ['Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Perth', 'Pacific/Auckland'] },
+];
+
+/**
+ * Pick the most likely region from the user's IANA timezone. Returns
+ * 'us-central1' as a last-resort fallback so the picker always has
+ * something pre-selected.
+ */
+export function inferRegionFromTimezone(tz: string): string {
+  for (const opt of REGION_OPTIONS) {
+    if (opt.tz.some((prefix) => tz === prefix || tz.startsWith(prefix + '/'))) {
+      return opt.region;
+    }
+  }
+  // Continent-level fallbacks for timezones we don't enumerate.
+  if (tz.startsWith('Europe/')) return 'europe-west1';
+  if (tz.startsWith('Asia/')) return 'asia-southeast1';
+  if (tz.startsWith('Australia/') || tz.startsWith('Pacific/')) return 'australia-southeast1';
+  if (tz.startsWith('Africa/')) return 'europe-west1'; // Johannesburg etc.: Belgium is the closest GCE region with reasonable latency
+  return 'us-central1';
+}
+
+async function pickRegion(): Promise<string | undefined> {
+  let detected = 'us-central1';
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    detected = inferRegionFromTimezone(tz);
+  } catch {
+    // Older runtimes may not expose timeZone. Fall back to us-central1.
+  }
+  interface Item extends vscode.QuickPickItem { region: string }
+  const items: Item[] = REGION_OPTIONS.map((opt) => {
+    const auto = opt.region === detected;
+    return {
+      label: `${auto ? '$(star-full) ' : ''}${opt.region}`,
+      description: `${opt.location} · $${opt.hourlyUSD.toFixed(4)}/hr (e2-standard-2)`,
+      detail: auto ? 'Auto-selected based on your timezone' : undefined,
+      region: opt.region,
+    };
+  });
+  // Move the auto-detected option to the top so it's the natural Enter pick.
+  items.sort((a, b) => (a.region === detected ? -1 : b.region === detected ? 1 : 0));
+
+  const picked = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Pick a GCP region for the VM (★ = closest to you)',
+    matchOnDescription: true,
+    matchOnDetail: true,
+  });
+  return picked?.region;
 }
 
 /**
