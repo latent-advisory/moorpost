@@ -84,6 +84,8 @@ Open a terminal and run `claude` (or use Anthropic's official Claude Code VSCode
 
 ### Step 4 — Handoff (when you step away)
 
+> **If your session runs in Anthropic's Claude Code panel:** close that panel before triggering handoff (Moorpost shows a pre-flight prompt). VSCode doesn't allow one extension to close another's panel programmatically. See [Working with Anthropic's Claude Code VSCode extension](#working-with-anthropics-claude-code-vscode-extension) below for details.
+
 Three ways to trigger:
 
 - **Click the status bar** (`☁ local · stopped · $0.04`) → pick **"Handoff a session to remote"**.
@@ -102,6 +104,8 @@ What you see, in order:
 Close the laptop. The VM keeps running, the sync keeps mirroring, Claude keeps working.
 
 ### Step 5 — Return (when you come back)
+
+> **Same caveat as handoff:** if the session runs in Anthropic's Claude Code panel on the remote, close that panel before triggering return.
 
 Same three triggers, mirrored:
 
@@ -134,6 +138,8 @@ If `mutagen` flags a sync conflict (file edited on both sides), the handoff or r
 ### Working with Anthropic's Claude Code VSCode extension
 
 If [Anthropic's official Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) is installed, Moorpost auto-detects it. On handoff, instead of (or in addition to) opening the "Moorpost: Claude (remote)" terminal, Moorpost re-routes that extension's panel to talk to the remote `claude` process. The model retains full conversation context; the panel scrollback resets (prior messages remain in Claude Code's history list).
+
+> **⚠️ You must close the Claude Code panel before handoff/return.** VSCode does not let one extension programmatically close another extension's panel, so Moorpost cannot do this for you. When you trigger handoff or return on a session running in Anthropic's panel, Moorpost shows a pre-flight notification (*"Moorpost: close the Claude Code panel for …, then click 'I closed it' to handoff."*) — close the tab in VSCode first, then click the button. Terminal sessions don't need this step; only the Anthropic-plugin surface does.
 
 Control which surface gets swapped via the `moorpost.handoffSurface` setting:
 
