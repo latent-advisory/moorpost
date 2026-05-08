@@ -2,7 +2,7 @@
   "name": "moorpost-vscode",
   "displayName": "Moorpost VSCode",
   "description": "Tether your laptop to a remote forward base where Claude Code keeps working.",
-  "version": "1.1.10",
+  "version": "1.1.11",
   "publisher": "LatentAdvisory",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -139,6 +139,18 @@
         "command": "moorpost.editConfig",
         "title": "Moorpost: Edit project config (machine type, region, sync)",
         "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.stopVm",
+        "title": "Moorpost: Stop VM (preserves disk)",
+        "icon": "$(debug-stop)",
+        "category": "Moorpost"
+      },
+      {
+        "command": "moorpost.startVm",
+        "title": "Moorpost: Start VM",
+        "icon": "$(play)",
+        "category": "Moorpost"
       }
     ],
     "viewsContainers": {
@@ -235,6 +247,14 @@
         {
           "command": "moorpost.editConfig",
           "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.stopVm",
+          "when": "moorpost.configured"
+        },
+        {
+          "command": "moorpost.startVm",
+          "when": "moorpost.configured"
         }
       ],
       "view/title": [
@@ -268,12 +288,32 @@
         },
         {
           "command": "moorpost.attach",
-          "when": "view == moorpost.projectTree && viewItem == moorpost.vm",
+          "when": "view == moorpost.projectTree && viewItem =~ /^moorpost\\.vm/",
           "group": "moorpost@1"
         },
         {
+          "command": "moorpost.stopVm",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm.running",
+          "group": "inline"
+        },
+        {
+          "command": "moorpost.stopVm",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm.running",
+          "group": "moorpost@2"
+        },
+        {
+          "command": "moorpost.startVm",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm.stopped",
+          "group": "inline"
+        },
+        {
+          "command": "moorpost.startVm",
+          "when": "view == moorpost.projectTree && viewItem == moorpost.vm.stopped",
+          "group": "moorpost@2"
+        },
+        {
           "command": "moorpost.destroy",
-          "when": "view == moorpost.projectTree && viewItem == moorpost.vm",
+          "when": "view == moorpost.projectTree && viewItem =~ /^moorpost\\.vm/",
           "group": "moorpost@9"
         },
         {

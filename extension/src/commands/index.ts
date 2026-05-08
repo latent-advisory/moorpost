@@ -930,5 +930,52 @@ export function registerCommands(
     vscode.commands.registerCommand('moorpost.editConfig', editConfig),
 
     vscode.commands.registerCommand('moorpost.toggleSide', toggleSide),
+
+    // Manual VM stop — exposed so the user can shut the VM down in the
+    // out-of-sync case where remote_sids has cleared but the GCE instance
+    // is still running (auto-stop disabled, idle heuristic missed it,
+    // mutagen-agent still alive, etc.). Cheaper than `destroy` because it
+    // preserves the disk; equivalent to `moorpost down`.
+    vscode.commands.registerCommand('moorpost.stopVm', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      const status = await getStatus(cwd);
+      if (!status?.vm_id) {
+        vscode.window.showInformationMessage('No VM provisioned for this project.');
+        return;
+      }
+      const remoteCount = status.remote_sids?.length ?? 0;
+      if (remoteCount > 0) {
+        const proceed = await vscode.window.showWarningMessage(
+          `${remoteCount} session${remoteCount === 1 ? '' : 's'} still routed to remote. Stop the VM anyway?`,
+          { modal: true, detail: 'These sessions will lose their tmux runtime. The JSONL files stay on the persistent disk; you can resume them by handing off again.' },
+          'Stop VM',
+        );
+        if (proceed !== 'Stop VM') return;
+      }
+      runInTerminal(['down'], cwd);
+      refreshTreeAfter(4000);
+    }),
+
+    // Manual VM start — wakes a stopped VM without doing a handoff.
+    // Useful for testing / debugging or for the always-on-remote workflow
+    // where the user wants the VM warm before triggering a session.
+    vscode.commands.registerCommand('moorpost.startVm', async () => {
+      const cwd = workspaceRoot();
+      if (!cwd) {
+        vscode.window.showWarningMessage('Open a workspace folder first.');
+        return;
+      }
+      const status = await getStatus(cwd);
+      if (!status?.vm_id) {
+        vscode.window.showInformationMessage('No VM provisioned for this project. Run `moorpost provision` first.');
+        return;
+      }
+      runInTerminal(['up'], cwd);
+      refreshTreeAfter(4000);
+    }),
   );
 }

@@ -202,8 +202,15 @@ export function buildItems(s: StatusReport): MoorpostTreeItem[] {
   }
   if (s.vm_id) {
     const vmDetail = s.vm_state ? `${s.vm_id} (${s.vm_state})` : s.vm_id;
+    // State-suffixed contextValue lets package.json's view/item/context
+    // menu show the right inline action (Stop button when running, Start
+    // button when stopped). 'unknown' renders no inline button.
+    const stateSuffix =
+      s.vm_state === 'running' ? '.running' :
+      s.vm_state === 'stopped' || s.vm_state === 'terminated' ? '.stopped' :
+      '';
     items.push(
-      new MoorpostTreeItem('VM', vmDetail, new vscode.ThemeIcon('vm'), showStatus, 'moorpost.vm'),
+      new MoorpostTreeItem('VM', vmDetail, new vscode.ThemeIcon('vm'), showStatus, `moorpost.vm${stateSuffix}`),
     );
   }
   if (typeof s.month_to_date_usd === 'number') {
