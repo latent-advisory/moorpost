@@ -426,6 +426,16 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 		if err := waitForSSH(ctx, out, tgt.Host, tgt.Port, 90*time.Second); err != nil {
 			return fmt.Errorf("handoff: %w", err)
 		}
+		// sshd is up but the VM startup script may still be running its
+		// apt/npm phase (~3-5 min on first boot). InjectCredential below
+		// writes to /etc/moorpost/env, which the startup script's step 6
+		// is responsible for creating + chowning. Without this poll the
+		// inject hits "mkdir: cannot create directory '/etc/moorpost':
+		// Permission denied" because the moorpost user can't create dirs
+		// under /etc until step 6 has chowned the parent.
+		if err := waitForBootstrap(ctx, out, tgt, 5*time.Minute); err != nil {
+			return fmt.Errorf("handoff: %w", err)
+		}
 	}
 
 	// Inject the cached credential into /etc/moorpost/env (or wherever the
@@ -820,6 +830,68 @@ func waitForSSH(ctx context.Context, out io.Writer, host string, port int, timeo
 			delay = delay * 2
 			if delay > 4*time.Second {
 				delay = 4 * time.Second
+			}
+		}
+	}
+}
+
+// waitForBootstrap polls until the VM startup script has reached the point
+// where /etc/moorpost/ exists and is owned by the SSH user. The startup
+// script (cli/internal/bootstrap/bootstrap.sh.tmpl) creates and chowns this
+// dir as step 6 of 7 — which on first boot lands ~3-5 minutes after sshd
+// comes up because steps 1-5 install apt packages, Node, Claude Code, and
+// uv. Without this poll, InjectCredential races the startup script and
+// fails with "mkdir: cannot create directory '/etc/moorpost': Permission
+// denied" when sshd is up but step 6 hasn't run yet.
+//
+// We probe via `test -w /etc/moorpost` which only succeeds once the dir
+// exists AND the SSH user has write permission (i.e. step 6's chown ran).
+// On warm boots /etc/moorpost is already in place, so the first probe
+// returns immediately.
+func waitForBootstrap(ctx context.Context, out io.Writer, tgt provider.SSHTarget, timeout time.Duration) error {
+	hostSpec := tgt.User + "@" + tgt.Host
+	if tgt.User == "" {
+		hostSpec = tgt.Host
+	}
+	deadline := time.Now().Add(timeout)
+	delay := 2 * time.Second
+	announced := false
+	for {
+		args := []string{
+			"-o", "BatchMode=yes",
+			"-o", "ConnectTimeout=5",
+			"-o", "StrictHostKeyChecking=accept-new",
+		}
+		if tgt.Port != 0 && tgt.Port != 22 {
+			args = append(args, "-p", fmt.Sprintf("%d", tgt.Port))
+		}
+		if tgt.IdentityFile != "" {
+			args = append(args, "-i", tgt.IdentityFile)
+		}
+		args = append(args, hostSpec, "test -w /etc/moorpost")
+		probeCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+		err := exec.CommandContext(probeCtx, "ssh", args...).Run()
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if !announced {
+			fmt.Fprintf(out, "Waiting for VM startup script to finish (creates /etc/moorpost) ...\n")
+			announced = true
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("VM startup script did not finish within %s (last probe error: %v)", timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		// Backoff: 2s → 4s → 8s, capped at 8s.
+		if delay < 8*time.Second {
+			delay = delay * 2
+			if delay > 8*time.Second {
+				delay = 8 * time.Second
 			}
 		}
 	}
