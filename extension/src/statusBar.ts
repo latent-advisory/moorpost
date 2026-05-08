@@ -4,7 +4,7 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
 import { cliBinary, getStatus, StatusReport, workspaceRoot } from './cli';
-import { isBootstrapping, onRunStateChanged } from './runState';
+import { isBootstrapping, onRunStateChanged, clearBootstrapTerminal } from './runState';
 import { logToChannel } from './output';
 
 let item: vscode.StatusBarItem | undefined;
@@ -60,14 +60,26 @@ async function refresh(): Promise<void> {
   // → ready", clicking the bar must NOT route to whatever toggleSide would
   // pick from the partial status; toggleSide handles this same case by
   // focusing the terminal so the user sees what's happening.
-  if (isBootstrapping()) {
-    item.text = '$(sync~spin) Moorpost: setting up…';
-    item.tooltip = 'Bootstrap is running in the terminal. Click to focus it.';
-    item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-    return;
-  }
+  //
+  // The bootstrap flag is normally cleared by onDidCloseTerminal, but
+  // VSCode terminals don't auto-close when the command exits — the user
+  // typically leaves the terminal open to read the output. So we *also*
+  // self-clear the flag once the project state has reached "fully ready"
+  // (config + auth + VM), since by definition there's nothing left to
+  // bootstrap at that point.
   const cwd = workspaceRoot();
   const status = await getStatus(cwd);
+  if (isBootstrapping()) {
+    if (status && status.auth_cached && status.vm_id) {
+      // Bootstrap reached steady state; release the flag and fall through.
+      clearBootstrapTerminal();
+    } else {
+      item.text = '$(sync~spin) Moorpost: setting up…';
+      item.tooltip = 'Bootstrap is running in the terminal. Click to focus it.';
+      item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+      return;
+    }
+  }
   if (!status) {
     // Empty-state: make it visually distinct so the user knows setup is
     // needed, and align the tooltip with what clicking actually does

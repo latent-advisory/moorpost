@@ -20,7 +20,7 @@ import * as path from 'node:path';
 import { createHash } from 'node:crypto';
 import * as vscode from 'vscode';
 
-export const MIN_CLI_VERSION = '1.1.5';
+export const MIN_CLI_VERSION = '1.1.9';
 
 const RELEASE_BASE = 'https://github.com/latent-advisory/moorpost/releases/download';
 

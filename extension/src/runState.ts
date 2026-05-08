@@ -39,6 +39,18 @@ export function isBootstrapping(): boolean {
 }
 
 /**
+ * Manually release the bootstrap flag without waiting for the terminal
+ * to close. Used when an external signal (e.g., the project status
+ * having reached fully-provisioned) tells us bootstrap is logically
+ * done, even if the user hasn't closed the terminal yet. Idempotent.
+ */
+export function clearBootstrapTerminal(): void {
+  if (activeBootstrapTerminal === undefined) return;
+  activeBootstrapTerminal = undefined;
+  onChangeCallback?.();
+}
+
+/**
  * Register a callback fired whenever the in-progress state changes
  * (terminal tracked, or terminal closed). The status bar uses this to
  * refresh immediately rather than waiting for its 10s tick.

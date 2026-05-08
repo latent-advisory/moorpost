@@ -61,7 +61,13 @@ export async function bootstrapProject(): Promise<void> {
   const gcloudPick = await pickGCloudConfig();
   if (gcloudPick === undefined) return; // user dismissed
 
-  const args = ['bootstrap', '--yes'];
+  // Native machine-type picker so the user sees rates/sizes inline (instead
+  // of the in-terminal picker scrolling past during bootstrap). Bootstrap
+  // forwards --machine-type to its `init` step.
+  const machineType = await pickMachineType();
+  if (!machineType) return; // user dismissed
+
+  const args = ['bootstrap', '--yes', `--machine-type=${machineType}`];
   if (provisionChoice.provision) args.push('--provision');
   if (gcloudPick !== 'fallback-to-terminal') {
     args.push(`--gcp-config=${gcloudPick.name}`);
