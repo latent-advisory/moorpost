@@ -2,7 +2,7 @@
   "name": "moorpost-vscode",
   "displayName": "Moorpost VSCode",
   "description": "Tether your laptop to a remote forward base where Claude Code keeps working.",
-  "version": "1.1.13",
+  "version": "1.1.15",
   "publisher": "LatentAdvisory",
   "license": "Apache-2.0",
   "icon": "media/icon.png",
@@ -122,7 +122,8 @@
       },
       {
         "command": "moorpost.destroy",
-        "title": "Moorpost: Destroy VM…",
+        "title": "Moorpost: Destroy VM (delete disk)…",
+        "icon": "$(trash)",
         "category": "Moorpost"
       },
       {
@@ -310,6 +311,11 @@
           "command": "moorpost.startVm",
           "when": "view == moorpost.projectTree && viewItem == moorpost.vm.stopped",
           "group": "moorpost@2"
+        },
+        {
+          "command": "moorpost.destroy",
+          "when": "view == moorpost.projectTree && viewItem =~ /^moorpost\\.vm/",
+          "group": "inline@99"
         },
         {
           "command": "moorpost.destroy",

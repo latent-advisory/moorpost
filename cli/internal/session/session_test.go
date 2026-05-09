@@ -68,6 +68,9 @@ func (stubSync) Status(context.Context, sync.SyncSessionID) (sync.SyncStatus, er
 	return sync.SyncStatus{}, nil
 }
 func (stubSync) Stop(context.Context, sync.SyncSessionID) error { return nil }
+func (stubSync) TerminateAllByLabel(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (stubSync) ListConflicts(context.Context, sync.SyncSessionID) ([]sync.Conflict, error) {
 	return nil, nil
 }

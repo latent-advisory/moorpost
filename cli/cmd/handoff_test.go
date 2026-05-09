@@ -101,6 +101,9 @@ func (f *cmdFakeSync) Stop(_ context.Context, id mpsync.SyncSessionID) error {
 	f.stopCalls = append(f.stopCalls, id)
 	return f.stopErr
 }
+func (f *cmdFakeSync) TerminateAllByLabel(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
 func (f *cmdFakeSync) ListConflicts(_ context.Context, _ mpsync.SyncSessionID) ([]mpsync.Conflict, error) {
 	if f.listConflictsErr != nil {
 		return nil, f.listConflictsErr

@@ -56,6 +56,31 @@ function pickHandoffSurface(): HandoffSurface {
 }
 
 /**
+ * True if any Anthropic Claude Code panel is open as an editor tab.
+ * Older versions of the Anthropic plugin used `claudeVSCodePanel` as
+ * an editor-tab webview. Newer versions (2.x+) moved everything to
+ * sidebar webviews (`claudeVSCodeSidebar`, etc.), which `tabGroups`
+ * cannot see — so this returns false even when a panel is visible.
+ * Kept for back-compat with older plugin versions; resolveHandoff­
+ * SurfaceForSid uses pluginInstalled() as a more reliable signal.
+ */
+function anyClaudeTabOpen(): boolean {
+  return countClaudePanels() > 0;
+}
+
+/** Count of editor-tab Claude Code panels currently visible. */
+function countClaudePanels(): number {
+  let count = 0;
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      const input = tab.input as { viewType?: string } | undefined;
+      if (input?.viewType === 'claudeVSCodePanel') count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Resolve which surface to use for a specific session SID.
  *
  * pickHandoffSurface() is project-wide: it returns 'plugin' whenever the
@@ -66,8 +91,13 @@ function pickHandoffSurface(): HandoffSurface {
  *  2. ps parent inspection — shell parent = terminal, node parent = plugin.
  *     Takes priority over the tab map to avoid stale tabs from previous
  *     interrupted operations misleading the detection.
- *  3. ps 'unknown' (no --resume match) → 'terminal'. No live plugin
- *     process means no plugin panel to close or route.
+ *  3. ps 'unknown' (no --resume match) — fall back to:
+ *     a. tracker.getTabsForSid(sid) > 0 → plugin (older plugin versions)
+ *     b. anyClaudeTabOpen() → plugin (older plugin versions)
+ *     c. pluginInstalled() → plugin (conservative — newer plugin uses
+ *        sidebar webviews invisible to tabGroups; if the extension is
+ *        installed at all, assume the user is using it)
+ *     d. otherwise → terminal
  *  4. No tracker → project-wide pickHandoffSurface() fallback.
  */
 async function resolveHandoffSurfaceForSid(sid: string): Promise<HandoffSurface> {
@@ -83,19 +113,59 @@ async function resolveHandoffSurfaceForSid(sid: string): Promise<HandoffSurface>
     return fallback;
   }
 
-  // ps has priority — it sees the live process and can't be fooled by
-  // stale plugin tabs left over from previous interrupted operations.
+  // ps has priority for the no-ambiguity cases — it sees the live
+  // process and can't be fooled by stale plugin tabs left over from
+  // previous interrupted operations.
   const ps = await tracker.getSessionSurfaceForSid(sid);
-  if (ps !== 'unknown') {
-    logToChannel(`resolveHandoffSurface(${sid}): ps says ${ps}`);
-    return ps;
+  if (ps === 'plugin') {
+    logToChannel(`resolveHandoffSurface(${sid}): ps says plugin`);
+    return 'plugin';
+  }
+  if (ps === 'terminal') {
+    // The SSH-wins rule in sessionTracker classifies any SSH process
+    // routing `claude --resume <sid>` to a remote VM as 'terminal' —
+    // but that's exactly what the Claude Code plugin's wrapper does
+    // for a session that's been handed off (the wrapper rewrites the
+    // spawn to `ssh remote claude --resume <sid>`). If the plugin
+    // extension is installed, it's almost always the wrapper, not a
+    // hand-rolled SSH terminal. Prefer 'plugin' so the return prompt
+    // fires consistently with handoff. False-positive cost: terminal-
+    // only users with the plugin installed get one extra "I closed it"
+    // click — they can suppress permanently with
+    // moorpost.handoffSurface=terminal in settings.
+    if (pluginInstalled()) {
+      logToChannel(`resolveHandoffSurface(${sid}): ps says terminal but plugin installed (likely wrapper-routed) → plugin`);
+      return 'plugin';
+    }
+    logToChannel(`resolveHandoffSurface(${sid}): ps says terminal + plugin not installed → terminal`);
+    return 'terminal';
   }
 
-  // ps 'unknown': no live --resume <sid> process found. Covers sessions
-  // started with plain `claude` (no --resume flag) and already-exited
-  // processes. A plugin tab for this SID may exist but is likely stale.
-  // Default to 'terminal' — no live plugin process means no popup needed.
-  logToChannel(`resolveHandoffSurface(${sid}): ps unknown → terminal`);
+  // ps 'unknown': the grep-for-`--resume <sid>` heuristic missed the
+  // process. The Anthropic Claude Code plugin spawns `claude` without
+  // putting `--resume <sid>` on argv, so the SID isn't visible to ps.
+  // Fall back through several heuristics, most-specific first.
+  const trackedTabs = tracker.getTabsForSid(sid).length;
+  if (trackedTabs > 0) {
+    logToChannel(`resolveHandoffSurface(${sid}): ps unknown but tracker has ${trackedTabs} tab(s) → plugin`);
+    return 'plugin';
+  }
+  if (anyClaudeTabOpen()) {
+    logToChannel(`resolveHandoffSurface(${sid}): ps unknown but a Claude Code editor tab is open → plugin`);
+    return 'plugin';
+  }
+  if (pluginInstalled()) {
+    // Newer plugin versions render their UI as sidebar webviews which
+    // `tabGroups` cannot enumerate. The most reliable proxy for "user
+    // is running session in plugin" is "plugin is installed at all".
+    // Marginal cost: prompt fires for users who have the plugin
+    // installed but actually run sessions in a terminal. Acceptable —
+    // they can click I-closed-it once and move on, or set
+    // moorpost.handoffSurface=terminal in settings to suppress.
+    logToChannel(`resolveHandoffSurface(${sid}): ps unknown + plugin extension installed → plugin (conservative; sidebar webviews invisible to tabGroups)`);
+    return 'plugin';
+  }
+  logToChannel(`resolveHandoffSurface(${sid}): ps unknown + plugin not installed → terminal`);
   return 'terminal';
 }
 
@@ -379,19 +449,6 @@ export function registerCommands(
     return sid.slice(0, 8) + '…';
   };
 
-  // Heuristic: any Claude Code panel open in the workspace? Used as a
-  // fallback when the authoritative ps-based surface detection comes back
-  // 'unknown' (process gone, ps failed, etc).
-  const anyClaudeTabOpen = (): boolean => {
-    for (const group of vscode.window.tabGroups.all) {
-      for (const tab of group.tabs) {
-        const input = tab.input as { viewType?: string } | undefined;
-        if (input?.viewType === 'claudeVSCodePanel') return true;
-      }
-    }
-    return false;
-  };
-
   // Pre-CLI confirmation for plugin panels. Skipped entirely for sessions
   // running only in a terminal — terminal mode auto-replaces via
   // openLocalClaude/openRemoteClaude (programmatic dispose() works
@@ -405,48 +462,90 @@ export function registerCommands(
   //   3. Any Claude Code panel open at all — conservative fallback;
   //      shows the prompt rather than risk silent reveal-in-place.
   //
-  // The notification uses showWarningMessage with action buttons, which
-  // doesn't auto-dismiss — it stays in the toaster until the user clicks
-  // a button.
+  // UX: a sticky `withProgress` toast in the Notification area. Unlike
+  // showWarningMessage (which collapses to the bell when focus moves
+  // away), withProgress notifications remain visible in the toaster
+  // until the inner promise resolves — so they survive the user
+  // closing a tab. The notification has a built-in Cancel X (via
+  // `cancellable: true`); we resolve "proceed" automatically when the
+  // count of editor-tab Claude Code panels decreases.
+  //
+  // The Anthropic plugin's modern UI lives in sidebar webviews that
+  // tabGroups can't enumerate, so editor-tab panel-count is often 0
+  // even when the plugin is in active use. To handle that, we ALSO
+  // resolve "proceed" if a Claude Code panel WAS visible at prompt
+  // time and is later gone (count went down) OR — when no editor
+  // panel was visible at prompt time — we resolve on a per-prompt
+  // backup signal: a small "I closed it" status-bar button that's
+  // auto-disposed at the end. Belt and braces; user never has to
+  // hunt for the prompt.
   const preflightClosePrompt = async (
     cwd: string,
     sid: string,
     destLabel: 'remote' | 'local',
   ): Promise<boolean> => {
-    const tracker = getSessionTracker();
-    if (tracker) {
-      const surface = await tracker.getSessionSurfaceForSid(sid);
-      if (surface === 'terminal') {
-        logToChannel(`preflightClosePrompt(${sid}): ps says terminal, skipping prompt`);
-        return true;
-      }
-      if (surface === 'unknown') {
-        // Authoritative detection failed — fall back to heuristics.
-        if (tracker.getTabsForSid(sid).length === 0 && !anyClaudeTabOpen()) {
-          logToChannel(`preflightClosePrompt(${sid}): ps unknown + no plugin panels, skipping prompt`);
-          return true;
-        }
-        logToChannel(`preflightClosePrompt(${sid}): ps unknown but plugin panels exist, prompting (conservative)`);
-      } else {
-        logToChannel(`preflightClosePrompt(${sid}): ps says plugin, prompting`);
-      }
-    }
+    logToChannel(`preflightClosePrompt(${sid}): showing prompt (caller resolved surface as plugin)`);
     const preview = await sessionPreview(cwd, sid);
     const previewShort = preview.length > 60 ? preview.slice(0, 60) + '…' : preview;
     logToChannel(`preflightClosePrompt(${sid}): dest=${destLabel} preview="${previewShort}"`);
 
     const action = destLabel === 'remote' ? 'hand off' : 'return';
-    const choice = await vscode.window.showWarningMessage(
-      `Moorpost: close the Claude Code panel for "${previewShort}" (${sid.slice(0, 8)}…), then click "I closed it" to ${action}.`,
-      'I closed it',
-      'Cancel',
-    );
-    if (choice !== 'I closed it') {
-      logToChannel(`preflightClosePrompt(${sid}): cancelled (choice=${choice ?? 'dismissed'})`);
-      return false;
-    }
-    logToChannel(`preflightClosePrompt(${sid}): user confirmed close, proceeding`);
-    return true;
+    const initialPanelCount = countClaudePanels();
+
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      const disposables: vscode.Disposable[] = [];
+      const finish = (ok: boolean, source: string) => {
+        if (done) return;
+        done = true;
+        logToChannel(`preflightClosePrompt(${sid}): ${ok ? 'confirmed' : 'cancelled'} via ${source}`);
+        for (const d of disposables) {
+          try { d.dispose(); } catch { /* ignore */ }
+        }
+        resolve(ok);
+      };
+
+      // Status-bar confirm button — always visible regardless of whether
+      // the toast notification collapses. Belt-and-braces fallback so
+      // the user is never stuck.
+      const cmdId = `moorpost._preflightConfirm.${sid.slice(0, 8)}.${Date.now()}`;
+      disposables.push(
+        vscode.commands.registerCommand(cmdId, () => finish(true, 'status-bar confirm')),
+      );
+      const item = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 9999);
+      item.text = '$(check) Moorpost: I closed it';
+      item.tooltip = `Click after closing the Claude Code panel to ${action}.`;
+      item.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+      item.command = cmdId;
+      item.show();
+      disposables.push(item);
+
+      // Toast with an inline "I closed it" button. showWarningMessage
+      // may collapse to the bell if focus shifts — the status-bar button
+      // above stays visible in that case.
+      void vscode.window.showWarningMessage(
+        `Close the Claude Code panel for "${previewShort}" to ${action}`,
+        { modal: false },
+        'I closed it',
+        'Cancel',
+      ).then((choice) => {
+        if (choice === 'I closed it') finish(true, 'toast button');
+        else if (choice === 'Cancel' || choice === undefined) finish(false, 'toast cancel/dismiss');
+      });
+
+      // Secondary signal: editor-tab panel count decreased (older
+      // plugin versions that render panels as editor tabs).
+      if (initialPanelCount > 0) {
+        disposables.push(
+          vscode.window.tabGroups.onDidChangeTabs(() => {
+            const now = countClaudePanels();
+            if (now < initialPanelCount) {
+              finish(true, `tab-count-decrease (${initialPanelCount}→${now})`);
+            }
+          }),
+        );
+      }
+    });
   };
 
   // Post-CLI: open a fresh panel on the new destination. Pre-flight already
@@ -849,9 +948,26 @@ export function registerCommands(
           ? arg
           : (arg as { command?: { arguments?: unknown[] } } | undefined)
               ?.command?.arguments?.[0];
+      const cwd = workspaceRoot();
       if (typeof sid !== 'string' || !sid) {
         vscode.window.showWarningMessage('moorpost.openRemoteSession: missing session id');
         return;
+      }
+      // Pull the latest JSONL from remote so the plugin renders fresh
+      // history. Without this, turns appended on remote during a prior
+      // burst are invisible — the plugin reads the stale local JSONL
+      // when opening the panel. Best-effort: a failed pull falls through
+      // to opening with the stale local JSONL (worse UX, not broken).
+      if (cwd) {
+        logToChannel(`openRemoteSession: pulling JSONL for sid=${sid} before open`);
+        const exit = await runCliInOutput(['sessions', 'pull', '--session', sid], {
+          cwd,
+          title: 'Pulling latest session history',
+          reveal: 'on-error',
+        });
+        if (exit !== 0) {
+          logToChannel(`openRemoteSession: sessions pull exited ${exit} — opening with possibly stale local JSONL`);
+        }
       }
       logToChannel(`openRemoteSession: opening panel for remote sid=${sid}`);
       await openSessionWithHistory(sid);
@@ -904,9 +1020,23 @@ export function registerCommands(
         vscode.window.showWarningMessage('Open a workspace folder first.');
         return;
       }
+      const status = await getStatus(cwd);
+      const vmName = status?.vm_id ?? 'this VM';
+      const remoteCount = status?.remote_sids?.length ?? 0;
+      // Pricing reference: 100 GB pd-standard at $0.04/GB/mo = $4/mo idle.
+      // The number is approximate but in the right ballpark for the default
+      // disk size — accurate enough that users can trust it as an order
+      // of magnitude when deciding whether to keep the VM around.
+      const detail = [
+        `Stops the VM and deletes its boot disk (~$4/mo saved).`,
+        remoteCount > 0
+          ? `WARNING: ${remoteCount} session${remoteCount === 1 ? '' : 's'} still routed to remote — their tmux runtime and project files on the disk will be lost. Local JSONLs are preserved (you can resume the conversation locally), but synced-only files on the remote are gone.`
+          : `Local JSONLs and your local working tree are unaffected. To start fresh, run Bootstrap again — this re-provisions a new VM.`,
+        `This cannot be undone.`,
+      ].join('\n\n');
       const choice = await vscode.window.showWarningMessage(
-        'Permanently destroy this VM and its boot disk? This cannot be undone.',
-        { modal: true },
+        `Permanently destroy ${vmName}?`,
+        { modal: true, detail },
         'Destroy',
       );
       if (choice !== 'Destroy') return;

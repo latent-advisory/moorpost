@@ -18,6 +18,9 @@ func (f *fakeSync) Status(context.Context, SyncSessionID) (SyncStatus, error) {
 	return SyncStatus{}, nil
 }
 func (f *fakeSync) Stop(context.Context, SyncSessionID) error { return nil }
+func (f *fakeSync) TerminateAllByLabel(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (f *fakeSync) ListConflicts(context.Context, SyncSessionID) ([]Conflict, error) {
 	return nil, nil
 }

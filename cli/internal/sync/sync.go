@@ -156,6 +156,14 @@ type Sync interface {
 
 	// Stop terminates the session. After Stop, the SyncSessionID is invalid.
 	Stop(ctx context.Context, id SyncSessionID) error
+
+	// TerminateAllByLabel terminates every session whose label matches `label`.
+	// Used by handoff to clear orphan sessions left behind by aborted prior
+	// runs (e.g., a StartSession call succeeded but a subsequent Resume timed
+	// out before the session ID could be persisted to state.json). Idempotent
+	// — returns (0, nil) when no sessions match. Engine implementations should
+	// match by exact label, not substring.
+	TerminateAllByLabel(ctx context.Context, label string) (int, error)
 }
 
 // ErrInvalidDirection indicates an OneShot call was passed a non-unidirectional

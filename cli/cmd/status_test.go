@@ -114,6 +114,9 @@ func (s *statusFakeSync) Status(context.Context, mpsync.SyncSessionID) (mpsync.S
 	return s.statusReturn, s.statusErr
 }
 func (s *statusFakeSync) Stop(context.Context, mpsync.SyncSessionID) error { return nil }
+func (s *statusFakeSync) TerminateAllByLabel(context.Context, string) (int, error) {
+	return 0, nil
+}
 func (s *statusFakeSync) ListConflicts(context.Context, mpsync.SyncSessionID) ([]mpsync.Conflict, error) {
 	return nil, nil
 }

@@ -561,9 +561,20 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	// desktop app's .docx edits at the root propagate to the remote
 	// while Claude Code is running there).
 	remoteProjectPath := remoteProjectPathFor(c)
+	syncLabel := c.Config.ProjectSlug + "-handoff"
+	// Pre-flight: terminate any orphan sync sessions left behind by aborted
+	// prior handoffs (StartSession succeeded but a later step failed before
+	// state.json could be persisted, leaking the sessionID). Mutagen lets
+	// multiple sessions share a name, so without this sweep an unstable
+	// network can produce dozens of duplicates over time, exhausting SSH
+	// multiplex slots and making future handoffs fail with "Operation
+	// timed out" — exactly the failure mode this code path was hit by.
+	if removed, err := c.Sync.TerminateAllByLabel(ctx, syncLabel); err == nil && removed > 0 {
+		fmt.Fprintf(out, "Cleaned up %d orphan sync session(s) from prior runs\n", removed)
+	}
 	fmt.Fprintf(out, "Starting continuous sync %s ↔ %s:%s ...\n", c.ProjectDir, tgt.Host, remoteProjectPath)
 	syncID, err := c.Sync.StartSession(ctx, mpsync.SyncSpec{
-		Label:          c.Config.ProjectSlug + "-handoff",
+		Label:          syncLabel,
 		Alpha:          mpsync.Endpoint{Path: c.ProjectDir},
 		Beta:           mpsync.Endpoint{SSHHost: hostFromTarget(tgt), Path: remoteProjectPath},
 		ConflictPolicy: c.Config.Sync.ConflictPolicy,
@@ -572,6 +583,20 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	if err != nil {
 		return fmt.Errorf("handoff: start sync session: %w", err)
 	}
+	// Defer cleanup of the just-created sync session if any subsequent step
+	// fails. Set syncCommitted=true once we've persisted syncID into
+	// state.json — at that point return.go knows how to clean it up.
+	syncCommitted := false
+	defer func() {
+		if syncCommitted {
+			return
+		}
+		// Use Background() — the parent ctx may already be canceled by the
+		// time we run, and we still want to clean up.
+		if err := c.Sync.Stop(context.Background(), syncID); err == nil {
+			fmt.Fprintf(out, "  → rolled back sync session %s after handoff error\n", syncID)
+		}
+	}()
 
 	// Resume the agent on the remote. Resolution order:
 	//   1. opts.SessionID (set by the VSCode extension to migrate the
@@ -661,6 +686,9 @@ func RunHandoff(ctx context.Context, out io.Writer, in io.Reader, c *Context, op
 	}); err != nil {
 		return err
 	}
+	// state.json now records syncID; subsequent failures don't leak it
+	// (return.go finds it in state and terminates correctly).
+	syncCommitted = true
 	// Per-SID routing: register the resolved SID into RemoteSIDs so the
 	// wrapper routes that specific session to remote (other sessions
 	// stay on whatever ActiveSide says). Idempotent: a second handoff

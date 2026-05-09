@@ -577,6 +577,16 @@ fi
 # remote (via /Users/.../ → /home/moorpost/moorpost/<slug>), so we can
 # pass the literal local cwd as the remote cd target.
 remote_cmd="cd $(printf '%q' "$PWD") && "
+# Source /etc/moorpost/env so claude on remote sees CLAUDE_CODE_OAUTH_TOKEN
+# (and any future auth env vars). `moorpost handoff` populates this file
+# via InjectCredential. Without this, the plugin's claude — which runs
+# via THIS wrapper, not the moorpost-managed tmux session — has no
+# OAuth token and pops the login screen on first prompt. Use `set -a`
+# so vars in the file are exported automatically; then `set +a` to
+# return to default behavior. The `[ -f ... ]` guard means a fresh
+# bootstrap (env not yet populated by handoff) doesn't error out —
+# claude will still launch and trigger its own auth flow as before.
+remote_cmd+="if [ -f /etc/moorpost/env ]; then set -a; . /etc/moorpost/env; set +a; fi && "
 if [[ -n "$remote_config_dir" ]]; then
   remote_cmd+="export CLAUDE_CONFIG_DIR=$(printf '%q' "$remote_config_dir") && "
 fi

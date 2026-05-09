@@ -171,6 +171,51 @@ func (e *engine) Stop(ctx context.Context, id mpsync.SyncSessionID) error {
 	return fmt.Errorf("mutagen sync terminate exit %d: %s", code, strings.TrimSpace(stderrStr))
 }
 
+// TerminateAllByLabel walks `mutagen sync list` for sessions whose name
+// equals `label`, then terminates each by identifier. Mutagen lets multiple
+// sessions share a name (it's a label, not a unique key), so a single
+// `mutagen sync terminate <name>` call wouldn't reliably catch them all.
+//
+// The list output is parsed via `--template`; we get one line per session
+// in the form `<Name>|<Identifier>`. Sessions without an identifier
+// (which shouldn't happen, but defensively) are skipped. Errors from
+// individual Stop calls are logged but don't abort the sweep — this is
+// best-effort cleanup.
+func (e *engine) TerminateAllByLabel(ctx context.Context, label string) (int, error) {
+	if label == "" {
+		return 0, errors.New("mutagen: TerminateAllByLabel requires a non-empty label")
+	}
+	tmpl := `{{range .}}{{.Name}}|{{.Identifier}}` + "\n" + `{{end}}`
+	stdout, _, code, err := e.exec.Run(ctx, e.binary,
+		[]string{"sync", "list", "--template", tmpl}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("mutagen sync list: %w", err)
+	}
+	if code != 0 {
+		// Empty list is fine; only fail on real errors.
+		return 0, nil
+	}
+	var ids []string
+	for _, line := range strings.Split(string(stdout), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		name, id, ok := strings.Cut(line, "|")
+		if !ok || id == "" || name != label {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	count := 0
+	for _, id := range ids {
+		if err := e.Stop(ctx, mpsync.SyncSessionID(id)); err == nil {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (e *engine) simpleSubcommand(ctx context.Context, sub, id string) error {
 	if id == "" {
 		return fmt.Errorf("mutagen: %s requires a non-empty session id", sub)

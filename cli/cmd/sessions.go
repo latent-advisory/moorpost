@@ -59,11 +59,115 @@ var (
 	sessionsListFlagNoLive bool
 )
 
+// sessionsPullCmd rsyncs a single session's JSONL from the remote VM down to
+// the local ~/.claude/projects/<encoded>/<sid>.jsonl. Used by the extension
+// before opening a remote-routed panel so the plugin renders the up-to-date
+// conversation history instead of the stale local snapshot. Without this,
+// turns appended to the JSONL on remote (during a previous session burst)
+// are invisible until the user explicitly returns the session.
+var sessionsPullCmd = &cobra.Command{
+	Use:   "pull",
+	Short: "Rsync a remote session's JSONL down to local",
+	Long: `Pulls the latest session JSONL from the project's VM to local. The
+session must be in remote_sids (i.e., currently routed remote). Used by
+the VSCode extension to refresh local history before opening a remote
+session in a Claude Code panel.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		c, err := loadProjectContext(ContextOptions{
+			RequireConfig: true,
+			Stdout:        cmd.OutOrStdout(),
+			Stderr:        cmd.ErrOrStderr(),
+		})
+		if err != nil {
+			return err
+		}
+		if sessionsPullFlagSession == "" {
+			return fmt.Errorf("--session is required")
+		}
+		return RunSessionsPull(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(), c, sessionsPullFlagSession)
+	},
+}
+
+var sessionsPullFlagSession string
+
 func init() {
 	sessionsListCmd.Flags().BoolVar(&sessionsListFlagJSON, "json", false, "emit machine-readable JSON")
 	sessionsListCmd.Flags().BoolVar(&sessionsListFlagNoLive, "no-live", false, "skip the per-session ssh check for a live remote claude process (faster)")
+	sessionsPullCmd.Flags().StringVar(&sessionsPullFlagSession, "session", "", "session id to pull from remote")
 	sessionsCmd.AddCommand(sessionsListCmd)
+	sessionsCmd.AddCommand(sessionsPullCmd)
 	rootCmd.AddCommand(sessionsCmd)
+}
+
+// RunSessionsPull rsyncs <project>/<sid>.jsonl from the project's VM down to
+// the local ~/.claude/projects/<encoded>/ directory. No-op (with a clear
+// log line) if the SID isn't in remote_sids — pulling a local-only session
+// would clobber the local copy with a stale remote artifact.
+func RunSessionsPull(ctx context.Context, out, errOut io.Writer, c *Context, sid string) error {
+	if c == nil || c.State == nil {
+		return fmt.Errorf("no project context")
+	}
+	ps, ok := c.State.GetProject(projectKey(c))
+	if !ok {
+		return fmt.Errorf("project not registered in state.json: %s", c.ProjectDir)
+	}
+	inRemote := false
+	for _, r := range ps.RemoteSIDs {
+		if r == sid {
+			inRemote = true
+			break
+		}
+	}
+	if !inRemote {
+		fmt.Fprintf(out, "session %s not in remote_sids — skipping pull\n", sid)
+		return nil
+	}
+	if ps.VMID == "" {
+		return fmt.Errorf("project has no VM provisioned")
+	}
+	tgt, err := c.Provider.SSHTarget(ctx, ps.VMID)
+	if err != nil {
+		return fmt.Errorf("ssh target: %w", err)
+	}
+	if tgt.Host == "" {
+		return fmt.Errorf("VM has no host")
+	}
+
+	encoded := nonSlugRE.ReplaceAllString(c.ProjectDir, "-")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("home dir: %w", err)
+	}
+	localDir := filepath.Join(home, ".claude", "projects", encoded)
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return fmt.Errorf("mkdir local sessions dir: %w", err)
+	}
+	localFile := filepath.Join(localDir, sid+".jsonl")
+	remoteHomeDir := "/home/moorpost"
+	if tgt.User != "" && tgt.User != "moorpost" {
+		remoteHomeDir = "/home/" + tgt.User
+	}
+	remoteFile := remoteHomeDir + "/.claude/projects/" + encoded + "/" + sid + ".jsonl"
+	host := tgt.Host
+	if tgt.User != "" {
+		host = tgt.User + "@" + tgt.Host
+	}
+	sshCmd := "ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new"
+	if tgt.IdentityFile != "" {
+		sshCmd += " -i " + tgt.IdentityFile
+	}
+	rsyncArgs := []string{
+		"-a", "--update", "--timeout=15",
+		"-e", sshCmd,
+		host + ":" + remoteFile,
+		localFile,
+	}
+	cmd := exec.CommandContext(ctx, "rsync", rsyncArgs...) // #nosec G204
+	if combined, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("rsync %s → %s: %w (output: %s)", remoteFile, localFile, err, strings.TrimSpace(string(combined)))
+	}
+	fmt.Fprintf(out, "pulled %s\n", localFile)
+	return nil
 }
 
 // SessionsListOptions controls RunSessionsList.
